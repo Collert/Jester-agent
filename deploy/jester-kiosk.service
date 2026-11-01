@@ -1,0 +1,33 @@
+# The TV: Cage (a one-window Wayland compositor) running Chromium in kiosk mode on tty1, opening the agent's page.
+# systemd starts it again whenever it exits; the agent restarts it when it stops answering.
+[Unit]
+Description=Pavilion visual dongle kiosk browser
+After=systemd-user-sessions.service jester-agent.service plymouth-quit-wait.service
+Wants=jester-agent.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=kiosk
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+TTYReset=yes
+TTYVHangup=yes
+UtmpIdentifier=tty1
+UtmpMode=user
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/state && exit 0; sleep 1; done; exit 0'
+ExecStart=/usr/bin/cage -s -- /usr/bin/chromium-browser \
+    --kiosk --ozone-platform=wayland --noerrdialogs --disable-infobars --no-first-run \
+    --disable-session-crashed-bubble --disable-features=Translate,TranslateUI --disable-pinch \
+    --overscroll-history-navigation=0 --check-for-update-interval=31536000 --password-store=basic \
+    --autoplay-policy=no-user-gesture-required \
+    --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+    --user-data-dir=/home/kiosk/.config/jester-chromium \
+    http://127.0.0.1:8080/
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=graphical.target

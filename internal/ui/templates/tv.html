@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pavilion dongle</title>
+<link rel="stylesheet" href="/static/tv.css">
+</head>
+<body>
+<div id="app">{{ template "app" . }}</div>
+<script type="module" src="/static/tv.js"></script>
+</body>
+</html>
+{{ define "icon" }}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="{{ . }}"/></svg>{{ end }}
+{{ define "qr" }}<svg role="img" aria-label="QR code: join the setup Wi-Fi" viewBox="0 0 {{ .Size }} {{ .Size }}" shape-rendering="crispEdges"><path d="{{ .Path }}" fill="#14261F"/></svg>{{ end }}
+{{ define "app" }}
+<div class="tv tv--{{ .Kind }}" data-phase="{{ .Phase }}"{{ if .Go }} data-go="{{ .Go }}"{{ end }}>
+  <div class="blob blob--a" aria-hidden="true"></div>
+  <div class="blob blob--b" aria-hidden="true"></div>
+
+  <header class="brand">
+    <span class="brand-mark">{{ template "icon" "M3 11 12 4l9 7 M5 10v10h14V10 M10 20v-6h4v6" }}</span>
+    <div><div class="brand-top">{{ .BrandTop }}</div><div class="brand-sub">{{ .BrandSub }}</div></div>
+  </header>
+  <div class="top-right">{{ if ne .Kind "idle" }}<span>{{ .Version }}</span>{{ end }}<span class="clock" data-clock>{{ .Clock }}</span></div>
+
+  {{ if or (eq .Kind "pair") (eq .Kind "rescue") }}
+  <section class="pair">
+    <div class="pair-copy">
+      {{ if eq .Kind "pair" }}
+      <div class="kicker">Set up this screen</div>
+      <h1 class="h-xl">Scan to start</h1>
+      <p class="lead">Point your phone’s camera at the code. Your phone joins this dongle’s Wi-Fi and setup opens on its own.</p>
+      {{ else }}
+      <div class="kicker">{{ .Kicker }}</div>
+      <h1 class="h-xl">{{ .Title }}</h1>
+      <p class="lead">{{ .Text }}</p>
+      {{ end }}
+      <div class="join-card">
+        <div class="join-head">No camera? Join this Wi-Fi instead</div>
+        <div class="join-grid">
+          <span class="join-l">Network</span><span class="mono join-v">{{ .SSID }}</span>
+          <span class="join-l">Password</span><span class="mono join-v amber">{{ .Password }}</span>
+        </div>
+        <div class="join-foot">If setup doesn’t open, go to <span class="mono white">{{ .PortalURL }}</span></div>
+      </div>
+    </div>
+    <div class="pair-qr">
+      <div class="qr-box">{{ template "qr" .QR }}</div>
+      <div class="qr-cap">{{ template "icon" "M2 9a15 15 0 0 1 20 0 M5 12.5a10 10 0 0 1 14 0 M8.5 16a5 5 0 0 1 7 0 M12 19.5h.01" }}Joins {{ .SSID }}</div>
+    </div>
+  </section>
+  {{ if eq .Kind "pair" }}<div class="bottom-note">You’ll need your Pavilion address and a pairing code from <b>Settings › Devices › Visual dongles</b>.</div>{{ end }}
+  {{ end }}
+
+  {{ if eq .Kind "setup" }}
+  <section class="hero">
+    <span class="hero-icon hero-icon--{{ .HeroTone }}">
+      {{ if .HeroSpin }}<svg aria-hidden="true" class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>
+      {{ else }}{{ template "icon" .HeroIcon }}{{ end }}
+    </span>
+    <h1 class="h-l">{{ .Title }}</h1>
+    <p class="lead">{{ .Text }}</p>
+    {{ if .ShowRetryQR }}
+    <div class="retry">
+      <div class="retry-qr">{{ template "qr" .QR }}</div>
+      <div><div class="retry-t">Setup Wi-Fi is back on</div>
+        <div class="retry-s">Scan again, or join <span class="mono white">{{ .SSID }}</span> with password <span class="mono amber">{{ .Password }}</span>. Your details are kept.</div></div>
+    </div>
+    {{ end }}
+    {{ if .ShowCountdown }}
+    <div class="countdown"><div class="bar"><div class="bar-fill" style="animation-duration: {{ .CountdownMS }}ms"></div></div><div class="countdown-t">Opening in a few seconds</div></div>
+    {{ end }}
+  </section>
+  <ol class="steps" aria-label="Setup steps">
+    <li class="steps-h">Setup</li>
+    {{ range .Steps }}
+    <li class="step{{ if .Done }} is-done{{ end }}{{ if .Now }} is-now{{ end }}{{ if .Fail }} is-fail{{ end }}{{ if .Todo }} is-todo{{ end }}">
+      {{ if not .Last }}<span class="step-line" aria-hidden="true"></span>{{ end }}
+      <span class="step-dot">
+        {{ if .Done }}{{ template "icon" "m5 12.5 4.5 4.5L19 7.5" }}{{ end }}
+        {{ if .Now }}<svg aria-hidden="true" class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>{{ end }}
+        {{ if .Fail }}{{ template "icon" "M6 6l12 12M18 6 6 18" }}{{ end }}
+        {{ if .Todo }}<span>{{ .N }}</span>{{ end }}
+      </span>
+      <span class="step-body"><span class="step-t">{{ .Title }}</span><span class="step-s">{{ .Sub }}</span></span>
+    </li>
+    {{ end }}
+  </ol>
+  {{ end }}
+
+  {{ if eq .Kind "idle" }}
+  <section class="middle drift">
+    <span class="idle-frame">{{ template "icon" "M3 5h18v12H3z M8 21h8 M12 17v4" }}</span>
+    <h1 class="h-l">No screen assigned</h1>
+    <p class="lead center">To show something here, open Pavilion, go to <b>Settings › Devices › Visual dongles</b>, choose <b class="amber">{{ .BrandTop }}</b> and pick a screen.</p>
+    <div class="pill"><span class="dot{{ if not .StatusOK }} dot--warn{{ end }}"></span>{{ .StatusText }}</div>
+  </section>
+  {{ end }}
+
+  {{ if eq .Kind "center" }}
+  <section class="middle">
+    {{ if .Spinner }}<span class="hero-icon hero-icon--plain"><svg aria-hidden="true" class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg></span>
+    {{ else }}<span class="hero-icon hero-icon--fail">{{ template "icon" "M12 8v5 M12 16.5h.01 M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" }}</span>{{ end }}
+    <h1 class="h-l">{{ .Title }}</h1>
+    {{ if .Text }}<p class="lead center">{{ .Text }}</p>{{ end }}
+    {{ if .StatusText }}<div class="pill"><span class="dot{{ if not .StatusOK }} dot--warn{{ end }}"></span>{{ .StatusText }}</div>{{ end }}
+  </section>
+  {{ end }}
+
+  <footer class="foot">
+    {{ range .Foot }}<span class="foot-i">{{ template "icon" .Icon }}{{ .Text }}</span>{{ end }}
+  </footer>
+
+  {{ if .Identify }}
+  <div class="identify" role="status">
+    <div class="identify-card">
+      <span class="brand-mark big">{{ template "icon" "M3 11 12 4l9 7 M5 10v10h14V10 M10 20v-6h4v6" }}</span>
+      <div class="identify-name">{{ .IdentifyName }}</div>
+      <div class="identify-sub">{{ .IdentifySub }}</div>
+    </div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}

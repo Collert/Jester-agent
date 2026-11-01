@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>Set up your dongle</title>
+<link rel="stylesheet" href="{{ .Base }}/static/portal.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="head">
+    <span class="mark"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11 12 4l9 7 M5 10v10h14V10 M10 20v-6h4v6"/></svg></span>
+    <div>
+      <div class="title">{{ if .Paired }}Pick a new Wi-Fi{{ else }}Set up your dongle{{ end }}</div>
+      <div class="sub">{{ if .Paired }}{{ .DongleName }} · {{ .StoreName }}{{ else }}Pavilion · Dongle {{ .Hardware }}{{ end }}</div>
+    </div>
+  </header>
+
+  {{ if eq .Step "off" }}
+  <section class="card">
+    <h1 class="h2">Setup is off</h1>
+    <p class="muted">This dongle isn’t taking setup right now. If the TV shows a QR code, scan it again.</p>
+  </section>
+  {{ end }}
+
+  {{ if and (not .Paired) (or (eq .Step "pav") (eq .Step "wifi")) }}
+  <ol class="tabs" aria-label="Steps">
+    <li{{ if eq .Step "pav" }} aria-current="step" class="on"{{ else }} class="done"{{ end }}><span class="tab-dot">{{ if eq .Step "pav" }}1{{ else }}✓{{ end }}</span>Pavilion</li>
+    <li{{ if eq .Step "wifi" }} aria-current="step" class="on"{{ end }}><span class="tab-dot">2</span>Wi-Fi</li>
+  </ol>
+  {{ end }}
+
+  {{ if .Banner }}
+  <div class="banner" role="alert">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5 M12 16.5h.01 M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+    <span>{{ .Banner }}</span>
+  </div>
+  {{ end }}
+
+  {{ if eq .Step "pav" }}
+  <form method="post" action="{{ .Base }}/" class="stack" novalidate>
+    <section class="card">
+      <label class="block">
+        <span class="lbl">Pavilion address</span>
+        <span class="hint">The address you open Pavilion at.</span>
+        <span class="field{{ if .DomainErr }} bad{{ end }}">
+          <span class="prefix">https://</span>
+          <input name="domain" value="{{ .Domain }}" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="pavilion.yourplace.com" required>
+        </span>
+      </label>
+      {{ if .DomainErr }}<div class="err">{{ .DomainErr }}</div>{{ end }}
+
+      <div class="gap">
+        <span class="lbl" id="code-l">Pairing code</span>
+        <span class="hint">In Pavilion, go to Settings › Devices › Visual dongles and tap <b>Add visual dongle</b>.</span>
+        <div class="code" data-code>
+          <div class="code-boxes" aria-hidden="true"><span class="box"></span><span class="box"></span><span class="box"></span><span class="box"></span><span class="box"></span><span class="box"></span></div>
+          <input aria-labelledby="code-l" name="code" value="{{ .Code }}" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" required>
+        </div>
+        {{ if .CodeErr }}<div class="err">{{ .CodeErr }}</div>{{ end }}
+        <div class="small">Codes last 15 minutes. The dongle checks it with Pavilion once it’s online.</div>
+      </div>
+    </section>
+    <button class="btn btn-amber wide">Next: Wi-Fi
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14 M13 6l6 6-6 6"/></svg></button>
+  </form>
+  {{ end }}
+
+  {{ if eq .Step "wifi" }}
+  <form method="post" action="{{ .Base }}/wifi" class="stack" novalidate data-wifi>
+    <section class="card nets" aria-label="Wi-Fi networks">
+      <div class="nets-head"><span class="lbl grow">Wi-Fi for the dongle</span>
+        <button class="chip" name="op" value="scan" formnovalidate data-scan>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7 M20 4v4h-4"/></svg>Scan</button></div>
+      {{ range .Nets }}
+      <div class="net" data-net{{ if .Secure }} data-secure{{ end }}>
+        <label class="net-row">
+          <input type="radio" name="ssid" value="{{ .SSID }}"{{ if .On }} checked{{ end }}>
+          <span class="radio" aria-hidden="true"></span>
+          <span class="net-name">{{ .SSID }}</span>
+          {{ if .Secure }}<svg class="lock" role="img" aria-label="Needs a password" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg>{{ end }}
+          <span class="bars" role="img" aria-label="{{ .SigLabel }}">{{ range bars .Bars }}<span{{ if . }} class="on"{{ end }}></span>{{ end }}</span>
+        </label>
+        <div class="net-more" data-slot></div>
+      </div>
+      {{ end }}
+      {{ if .CanWired }}
+      <div class="net" data-net>
+        <label class="net-row">
+          <input type="radio" name="ssid" value="__wired__"{{ if eq .Sel "__wired__" }} checked{{ end }}>
+          <span class="radio" aria-hidden="true"></span>
+          <span class="net-name">Use the network cable</span>
+        </label>
+      </div>
+      {{ end }}
+      <div class="net" data-net data-other>
+        <label class="net-row">
+          <input type="radio" name="ssid" value="__other__"{{ if eq .Sel "__other__" }} checked{{ end }}>
+          <span class="radio" aria-hidden="true"></span>
+          <span class="net-name">Other network…</span>
+        </label>
+        <div class="net-more other">
+          <input class="input" name="other_ssid" value="{{ .OtherSSID }}" aria-label="Network name" placeholder="Network name" autocapitalize="none" autocomplete="off" spellcheck="false">
+          <div data-slot></div>
+        </div>
+      </div>
+      <div class="pw-wrap" data-pw>
+        <span class="field pw{{ if .WifiErr }} bad{{ end }}">
+          <input name="password" type="password" value="{{ .Password }}" aria-label="Wi-Fi password" placeholder="Wi-Fi password" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <button type="button" class="chip white" data-show>Show</button>
+        </span>
+      </div>
+      {{ if .WifiErr }}<div class="err pad">{{ .WifiErr }}</div>{{ end }}
+    </section>
+    <div class="small pad">Pick the Wi-Fi this TV will use every day. These are the networks the dongle can hear from where it’s plugged in.</div>
+    <div class="row">
+      {{ if not .Paired }}<a class="btn btn-round" href="{{ .Base }}/pavilion" aria-label="Back to Pavilion address"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5 M11 6l-6 6 6 6"/></svg></a>{{ end }}
+      <button class="btn btn-amber grow" name="op" value="start">{{ if .Paired }}Use this Wi-Fi{{ else }}Start setup{{ end }}</button>
+    </div>
+  </form>
+  {{ end }}
+
+  {{ if eq .Step "sent" }}
+  <section class="sent">
+    <span class="sent-mark"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v12H3z M8 21h8 M12 17v4"/></svg></span>
+    <h1>Watch the TV</h1>
+    <p>The dongle is joining {{ .Joining }}. Your phone will drop off the setup Wi-Fi in a moment. That’s expected.</p>
+  </section>
+  <section class="card summary">
+    {{ range .Summary }}<div class="sum-row"><span class="sum-l">{{ index . 0 }}</span><span class="sum-v">{{ index . 1 }}</span></div>{{ end }}
+  </section>
+  <div class="note">If something goes wrong, the TV says what happened and the setup Wi-Fi comes back on. Scan the code on the TV again to fix it. Your details are kept.</div>
+  {{ end }}
+</main>
+<script type="module" src="{{ .Base }}/static/portal.js"></script>
+</body>
+</html>

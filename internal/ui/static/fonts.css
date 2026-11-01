@@ -1,0 +1,4 @@
+/* Bricolage Grotesque and Manrope (SIL Open Font License 1.1), latin, kept in the agent: during setup neither the TV
+   nor the phone can reach Google Fonts. */
+@font-face { font-family: "Bricolage Grotesque"; font-style: normal; font-weight: 500 700; font-stretch: 100%; font-display: swap; src: url("/static/fonts/bricolage-grotesque-latin.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-style: normal; font-weight: 500 800; font-display: swap; src: url("/static/fonts/manrope-latin.woff2") format("woff2"); }
