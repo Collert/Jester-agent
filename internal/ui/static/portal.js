@@ -27,7 +27,11 @@ if (wifi) {
         if (!slot || !(picked.hasAttribute("data-secure") || picked.hasAttribute("data-other"))) { pw.hidden = true; return; }
         pw.hidden = false;
         const value = pw.querySelector("input");
-        value.placeholder = picked.hasAttribute("data-other") ? "Password (leave empty if none)" : "Wi-Fi password";
+        const saved = pw.querySelector("[data-saved-key]");
+        // The note about Imager's password belongs to the network Imager saved (the one picked when the page came).
+        const onSaved = !!saved && picked.querySelector("input[name=ssid]").defaultChecked;
+        if (saved) saved.hidden = !onSaved;
+        value.placeholder = onSaved ? "Set in Raspberry Pi Imager" : picked.hasAttribute("data-other") ? "Password (leave empty if none)" : "Wi-Fi password";
         if (pw.parentElement !== slot) {
             slot.append(pw);
             // The saved password belongs to the saved network: another one starts empty.

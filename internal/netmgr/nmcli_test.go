@@ -23,6 +23,25 @@ func TestParseScanKeepsStrongestAndSorts(t *testing.T) {
 	}
 }
 
+func TestWifiProfilesSkipsOurs(t *testing.T) {
+	out := "preconfigured:802-11-wireless\njester-setup:802-11-wireless\njester-wifi:802-11-wireless\nWired connection 1:802-3-ethernet\nlo:loopback\n"
+	if got := wifiProfiles(out); len(got) != 1 || got[0] != "preconfigured" {
+		t.Fatalf("wifiProfiles = %q", got)
+	}
+}
+
+func TestHexPSK(t *testing.T) {
+	key := "8d4f3c9a0b1e2d3f4a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b"
+	if !HexPSK(key) {
+		t.Error("Imager's 64-hex-digit key")
+	}
+	for _, pw := range []string{"juniper2026", key[:63], key[:63] + "g"} {
+		if HexPSK(pw) {
+			t.Errorf("%q is a password", pw)
+		}
+	}
+}
+
 func TestBars(t *testing.T) {
 	for signal, want := range map[int]int{95: 4, 70: 4, 55: 3, 35: 2, 5: 1} {
 		if got := Bars(signal); got != want {

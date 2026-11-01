@@ -76,6 +76,31 @@ type Manager interface {
 	Status(ctx context.Context) Status
 	// Forget removes the saved Wi-Fi (when the dongle is unpaired or reset).
 	Forget(ctx context.Context) error
+	// TakePreconfigured returns the Wi-Fi someone saved on the SD card before the first boot (Raspberry Pi Imager's
+	// Wi-Fi settings) and removes it from NetworkManager, so it doesn't fight the setup Wi-Fi for the radio. nil when
+	// there's none.
+	TakePreconfigured(ctx context.Context) (*Preconfigured, error)
+}
+
+// Preconfigured is a Wi-Fi network saved outside the agent, by Raspberry Pi Imager.
+type Preconfigured struct {
+	SSID   string
+	PSK    string // the password, or (as Imager saves it) the 64-hex-digit key made from it: see HexPSK
+	Hidden bool
+}
+
+// HexPSK: psk is a WPA key in its 64-hex-digit form, not a password. NetworkManager takes either; the password
+// itself can't be got back from it.
+func HexPSK(psk string) bool {
+	if len(psk) != 64 {
+		return false
+	}
+	for _, c := range psk {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // HotspotIP is the dongle's address on its own setup Wi-Fi (NetworkManager's default for shared connections).

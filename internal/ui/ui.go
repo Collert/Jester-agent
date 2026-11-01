@@ -183,6 +183,7 @@ type portalView struct {
 	Nets                []netView
 	Sel                 string // the picked network, "__other__" or "__wired__"
 	OtherSSID, Password string
+	SavedKey            string // the network whose password Raspberry Pi Imager saved as a key: kept unless one is typed
 	WifiErr             string
 	CanWired            bool
 	Summary             [][2]string
@@ -272,6 +273,8 @@ func (s *Server) portalMux(base string) http.Handler {
 		v.Password = r.FormValue("password")
 		v.OtherSSID = strings.TrimSpace(r.FormValue("other_ssid"))
 		req := agent.SetupRequest{Password: v.Password}
+		// An empty password for the network Imager saved keeps Imager's key.
+		keepKey := func(ssid string) bool { return v.Password == "" && ssid != "" && ssid == v.SavedKey }
 		switch v.Sel {
 		case "__wired__":
 			req = agent.SetupRequest{Wired: true}
@@ -285,10 +288,13 @@ func (s *Server) portalMux(base string) http.Handler {
 		default:
 			req.SSID = v.Sel
 			for _, n := range v.Nets {
-				if n.SSID == v.Sel && n.Secure && v.Password == "" {
+				if n.SSID == v.Sel && n.Secure && v.Password == "" && !keepKey(n.SSID) {
 					v.WifiErr = "This network needs a password."
 				}
 			}
+		}
+		if !req.Wired && keepKey(req.SSID) {
+			req.Password = cfg.WifiPassword
 		}
 		if v.WifiErr == "" && !req.Wired && v.Password != "" && (len(v.Password) < 8 || len(v.Password) > 63) {
 			v.WifiErr = "Wi-Fi passwords are 8 to 63 characters."
@@ -337,6 +343,9 @@ func (s *Server) portalView(base, step string) portalView {
 	}
 	if cfg.Wired {
 		v.Sel = "__wired__"
+	}
+	if netmgr.HexPSK(cfg.WifiPassword) { // never sent to the phone: it isn't the password, and can't be shown as one
+		v.Password, v.SavedKey = "", cfg.WifiSSID
 	}
 	if step == "wifi" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

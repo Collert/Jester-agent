@@ -28,9 +28,9 @@ type Config struct {
 	PavilionURL  string `json:"pavilion_url"` // e.g. https://pavilion.juniperlane.ca
 	PairCode     string `json:"pair_code"`    // cleared once Pavilion accepts it
 	WifiSSID     string `json:"wifi_ssid"`
-	WifiPassword string `json:"wifi_password"`
-	WifiHidden   bool   `json:"wifi_hidden"` // typed in as "Other network…"
-	Wired        bool   `json:"wired"`       // uses the Ethernet cable, no Wi-Fi
+	WifiPassword string `json:"wifi_password"` // or the 64-hex-digit key Raspberry Pi Imager saved (netmgr.HexPSK)
+	WifiHidden   bool   `json:"wifi_hidden"`   // typed in as "Other network…"
+	Wired        bool   `json:"wired"`         // uses the Ethernet cable, no Wi-Fi
 
 	// What pairing gave it.
 	DongleID  int       `json:"dongle_id"`

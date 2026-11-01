@@ -16,6 +16,7 @@ type Fake struct {
 	joined  string
 	hotspot bool
 	lost    bool
+	preset  *Preconfigured
 }
 
 // NewFake returns a fake that answers after short delays.
@@ -119,6 +120,21 @@ func (f *Fake) Forget(ctx context.Context) error {
 	defer f.mu.Unlock()
 	f.joined = ""
 	return nil
+}
+
+func (f *Fake) TakePreconfigured(ctx context.Context) (*Preconfigured, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := f.preset
+	f.preset = nil
+	return p, nil
+}
+
+// Preconfigure pretends the network was saved with Raspberry Pi Imager before the first boot.
+func (f *Fake) Preconfigure(p Preconfigured) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.preset = &p
 }
 
 // Remember makes the fake already joined to a network (a dongle that was set up before a restart).

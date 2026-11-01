@@ -1,0 +1,30 @@
+# Tests the agent and builds it for the Pi (64-bit Raspberry Pi OS: Pi 3, 4, 5, Zero 2 W). The binary is kept with
+# each run; a tagged release (release.yml) attaches it to the GitHub release, which is where dongles can fetch
+# updates from later instead of anyone building on a Pi.
+name: Agent
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tags, for the version (git describe)
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: make pi
+      - name: Checksum
+        run: cd bin && sha256sum jester-agent-linux-arm64 > jester-agent-linux-arm64.sha256 && cat jester-agent-linux-arm64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jester-agent-linux-arm64
+          path: bin/jester-agent-linux-arm64*

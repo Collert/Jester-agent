@@ -1,0 +1,20 @@
+# pi-gen's settings for the dongle's SD card image (see image/README.md). build.sh adds the jester user's password
+# and SSH key from the environment, so they stay out of git. Raspberry Pi Imager's settings change most of these per
+# card when it writes the image.
+IMG_NAME=jester
+RELEASE=bookworm
+STAGE_LIST="stage0 stage1 stage2 stage-jester"
+DEPLOY_COMPRESSION=xz
+
+TARGET_HOSTNAME=jester
+FIRST_USER_NAME=jester
+# No "pick a username" wizard on the first boot: it would take over the TV, and there's no keyboard.
+DISABLE_FIRST_BOOT_USER_RENAME=1
+ENABLE_SSH=1
+
+# Wi-Fi stays off until a country is set (the rules for channels differ by country).
+WPA_COUNTRY=CA
+LOCALE_DEFAULT=en_CA.UTF-8
+TIMEZONE_DEFAULT=America/Toronto
+KEYBOARD_KEYMAP=us
+KEYBOARD_LAYOUT="English (US)"

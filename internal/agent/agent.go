@@ -286,6 +286,7 @@ func (a *Agent) hotspotUp(ctx context.Context) {
 
 // runSetup: not paired. The setup Wi-Fi stays on until a phone gives it details that work.
 func (a *Agent) runSetup(ctx context.Context) {
+	a.adoptPreconfigured(ctx) // before the setup page can answer
 	a.setPhase(PhasePair, "")
 	a.hotspotUp(ctx)
 	tick := time.NewTicker(10 * time.Second)
@@ -308,6 +309,22 @@ func (a *Agent) runSetup(ctx context.Context) {
 			a.hotspotUp(ctx)
 		}
 	}
+}
+
+// adoptPreconfigured keeps a Wi-Fi saved with Raspberry Pi Imager as the network the setup page starts with. It
+// isn't joined behind the phone's back: setup still goes through the phone, with the network filled in.
+func (a *Agent) adoptPreconfigured(ctx context.Context) {
+	p, err := a.Net.TakePreconfigured(ctx)
+	if err != nil {
+		a.logf("wifi", "Couldn't read the Wi-Fi saved with Raspberry Pi Imager: %v", err)
+	}
+	if p == nil {
+		return
+	}
+	a.logf("wifi", "Found %s, saved with Raspberry Pi Imager: the setup page starts with it", p.SSID)
+	_, _ = a.Store.Update(func(c *store.Config) {
+		c.WifiSSID, c.WifiPassword, c.WifiHidden, c.Wired = p.SSID, p.PSK, p.Hidden, false
+	})
 }
 
 // trySetup joins the network, then pairs. On failure the phase says why (the caller turns the hotspot back on).

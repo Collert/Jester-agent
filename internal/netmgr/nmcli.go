@@ -244,6 +244,42 @@ func (m *NM) Status(ctx context.Context) Status {
 	return st
 }
 
+// wifiProfiles reads `nmcli -t -f NAME,TYPE connection show`: the names of the Wi-Fi connections the agent didn't
+// make (Raspberry Pi Imager's is called "preconfigured").
+func wifiProfiles(out string) []string {
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		f := splitTerse(strings.TrimRight(line, "\r"))
+		if len(f) >= 2 && f[1] == "802-11-wireless" && f[0] != hotspotConn && f[0] != wifiConn {
+			names = append(names, f[0])
+		}
+	}
+	return names
+}
+
+func (m *NM) TakePreconfigured(ctx context.Context) (*Preconfigured, error) {
+	out, err := m.nmcli(ctx, 10*time.Second, "-t", "-e", "yes", "-f", "NAME,TYPE", "connection", "show")
+	if err != nil {
+		return nil, err
+	}
+	var found *Preconfigured
+	for _, name := range wifiProfiles(out) {
+		out, err := m.nmcli(ctx, 5*time.Second, "-e", "yes", "-g", "802-11-wireless.ssid,802-11-wireless.mode,802-11-wireless.hidden", "connection", "show", "id", name)
+		if f := splitTerse(strings.TrimSpace(out)); err == nil && found == nil && len(f) >= 3 && f[0] != "" && f[1] != "ap" {
+			p := &Preconfigured{SSID: f[0], Hidden: f[2] == "yes"}
+			// -s shows the key (root only); an open network has none.
+			if psk, err := m.nmcli(ctx, 5*time.Second, "-s", "-g", "802-11-wireless-security.psk", "connection", "show", "id", name); err == nil {
+				p.PSK = strings.TrimSpace(psk)
+			}
+			found = p
+		}
+		if _, err := m.nmcli(ctx, 10*time.Second, "connection", "delete", "id", name); err != nil {
+			return found, err
+		}
+	}
+	return found, nil
+}
+
 func (m *NM) Forget(ctx context.Context) error {
 	_, err := m.nmcli(ctx, 10*time.Second, "connection", "delete", wifiConn)
 	if err != nil && strings.Contains(err.Error(), "unknown connection") {

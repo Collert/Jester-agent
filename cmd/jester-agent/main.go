@@ -77,6 +77,11 @@ func main() {
 		if cfg := st.Config(); cfg.WifiSSID != "" {
 			f.Remember(cfg.WifiSSID)
 		}
+		// JESTER_FAKE_IMAGER_WIFI=ssid:password pretends Raspberry Pi Imager saved that Wi-Fi (a 64-hex-digit
+		// password is a key, as Imager saves it).
+		if ssid, psk, ok := strings.Cut(os.Getenv("JESTER_FAKE_IMAGER_WIFI"), ":"); ok {
+			f.Preconfigure(netmgr.Preconfigured{SSID: ssid, PSK: psk})
+		}
 		nm = f
 	} else {
 		nm = netmgr.NewNM(*wifiIf, *ethIf)

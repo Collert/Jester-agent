@@ -1,0 +1,37 @@
+# Builds the SD card image (image/build.sh) around the agent built by agent.yml. Run it from the Actions tab; tagged
+# releases run it too (release.yml). Needs the repository secret JESTER_PASSWORD (the jester user's password, for
+# SSH) and optionally JESTER_SSH_KEY (a public key to log in with instead).
+name: SD card image
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  agent:
+    uses: ./.github/workflows/agent.yml
+
+  image:
+    needs: agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # the Pi's CPU is emulated: about an hour
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jester-agent-linux-arm64
+          path: bin
+      - name: Make room # pi-gen needs more disk than the runner has free
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Emulate the Pi's CPU
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static binfmt-support
+      - name: Build
+        env:
+          JESTER_PASSWORD: ${{ secrets.JESTER_PASSWORD }}
+          JESTER_SSH_KEY: ${{ secrets.JESTER_SSH_KEY }}
+        run: bash image/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jester-image
+          path: image/pi-gen/deploy/*.img.xz
+          compression-level: 0 # already xz

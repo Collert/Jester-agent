@@ -71,11 +71,15 @@ make run          # or: go run ./cmd/jester-agent -fake-network -db ./dev.db -po
 The fake network has a few networks in range: any password of 8+ characters works except `wrongpass`, and `Far-Away`
 is never found. For Pavilion's address use your dev server, e.g. `http://127.0.0.1:8000`, and get a code from its
 Devices page. Without a DevTools port the TV page takes itself to the screen (and can't come back: that needs the
-real kiosk).
+real kiosk). `JESTER_FAKE_IMAGER_WIFI=Juniper-Staff:juniper2026` pretends Raspberry Pi Imager saved that Wi-Fi on
+the card (a password of 64 hex digits is a key, as Imager saves it); it only counts on a fresh `dev.db`.
 
 ## Put it on a Pi
 
-Raspberry Pi OS Bookworm Lite, 64-bit (Pi 3/4/5 or Zero 2 W). Set the Wi-Fi country with `raspi-config` first.
+The simplest way is the ready-made SD card image: flash it and the Pi starts as a dongle. See
+[image/README.md](image/README.md) for building and flashing it (GitHub Actions builds it).
+
+By hand, on Raspberry Pi OS Bookworm Lite, 64-bit (Pi 3/4/5 or Zero 2 W). Set the Wi-Fi country with `raspi-config` first.
 
 ```sh
 make pi                     # bin/jester-agent-linux-arm64 (no cgo needed)

@@ -110,6 +110,7 @@
           <input name="password" type="password" value="{{ .Password }}" aria-label="Wi-Fi password" placeholder="Wi-Fi password" autocomplete="off" autocapitalize="none" spellcheck="false">
           <button type="button" class="chip white" data-show>Show</button>
         </span>
+        {{ if .SavedKey }}<div class="hint" data-saved-key>The password for {{ .SavedKey }} was set in Raspberry Pi Imager. Leave this empty to use it, or type a new one.</div>{{ end }}
       </div>
       {{ if .WifiErr }}<div class="err pad">{{ .WifiErr }}</div>{{ end }}
     </section>
