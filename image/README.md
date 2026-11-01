@@ -22,11 +22,13 @@ runs [deploy/install.sh](../deploy/install.sh) inside the image as if it were a 
 Actions*): the password of the `jester` user, for SSH. Optionally add `JESTER_SSH_KEY` too, a public key
 (`ssh-ed25519 …`) to log in with instead. Then either:
 
-- *Actions › SD card image › Run workflow*: about an hour later the run has a `jester-image` download, or
+- *Actions › SD card image › Run workflow*: when it's done (it builds on GitHub's ARM runners, free for public
+  repositories) the run has a `jester-image` download, or
 - push a tag (`git tag v0.2.0 && git push --tags`): the same build, published as a GitHub release with the agent
   binary, the image and Imager's list (`.github/workflows/release.yml`).
 
-**On your own machine.** Linux or WSL, with Docker and `qemu-user-static`:
+**On your own machine.** Linux or WSL, with Docker and `qemu-user-static` (the Pi's programs run emulated, so
+expect an hour or more):
 
 ```sh
 make pi

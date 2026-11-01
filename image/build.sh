@@ -1,6 +1,7 @@
 #!/bin/bash -e
 # Builds the dongle's SD card image with pi-gen, Raspberry Pi's own image builder, in Docker. Needs Linux (or WSL)
-# with Docker and qemu-user-static, and the agent built for the Pi first (make pi):
+# with Docker (and qemu-user-static, unless the machine is ARM like the Pi), and the agent built for the Pi first
+# (make pi):
 #
 #   JESTER_PASSWORD=… [JESTER_SSH_KEY="ssh-ed25519 …"] image/build.sh
 #
