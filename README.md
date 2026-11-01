@@ -40,7 +40,7 @@ The designs are the `Dongle*` and `DonglePortal*` artboards in the *Pavilion POS
                     │   │  └── TV pages 127.0.0.1:8080 ◀── Chromium (Cage)  │──HDMI──▶ TV
                     │   │          DevTools 127.0.0.1:9222 ──▲ (steering)   │
                     └───┼───────────────────────────────────────────────────┘
-                        └── wss://pavilion/ws/dongle, POST /dongles/pair
+                        └── wss://pavilion/ws/dongle, POST /devices/dongles/pair
 ```
 
 The kiosk browser only ever opens two things: the agent's page (`http://127.0.0.1:8080/`, which shows whatever the

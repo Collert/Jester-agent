@@ -27,7 +27,7 @@ type fakePavilion struct {
 
 func (f *fakePavilion) handler(t *testing.T) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/dongles/pair", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/devices/dongles/pair", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
@@ -50,7 +50,7 @@ func (f *fakePavilion) handler(t *testing.T) http.Handler {
 		ctx := r.Context()
 		send := func(m any) { raw, _ := json.Marshal(m); _ = ws.Write(ctx, websocket.MessageText, raw) }
 		send(map[string]any{"type": "config", "name": "Window TV", "store": "Juniper Lane", "orientation": "landscape",
-			"screen": map[string]any{"name": "Specials", "url": "/dongles/open/abc"}})
+			"screen": map[string]any{"name": "Specials", "url": "/devices/dongles/open/abc"}})
 		go func() {
 			select {
 			case <-f.identify:
@@ -146,7 +146,7 @@ func TestSetupPairShowUnpair(t *testing.T) {
 	if !c.Paired() || c.Token != "7.s3cret" || c.Name != "Window TV" || c.StoreName != "Juniper Lane" {
 		t.Errorf("after pairing: %+v", c)
 	}
-	if c.Screen == nil || c.Screen.URL != server.URL+"/dongles/open/abc" {
+	if c.Screen == nil || c.Screen.URL != server.URL+"/devices/dongles/open/abc" {
 		t.Errorf("the screen's path is resolved against Pavilion: %+v", c.Screen)
 	}
 	if a.wantURL() != c.Screen.URL {

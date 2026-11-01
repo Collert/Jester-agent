@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 jester-agent runs a Pavilion visual dongle (a Raspberry Pi behind a TV). Read README.md for the flow and the package
-map, PROTOCOL.md for the contract with Pavilion (its `dongles` app; change both sides together).
+map, PROTOCOL.md for the contract with Pavilion (its `devices` app; change both sides together).
 
 - Go, no cgo (cross-compiles with `make pi`). Dependencies are kept few: coder/websocket, modernc.org/sqlite,
   skip2/go-qrcode. Keep `go 1.22` in go.mod working.

@@ -16,7 +16,7 @@ func TestConfigSurvivesReopen(t *testing.T) {
 	}
 	if _, err := s.Update(func(c *Config) {
 		c.PavilionURL, c.Token, c.WifiSSID = "https://p.example.com", "4.secret", "Cafe"
-		c.Screen = &Screen{Name: "Board", URL: "https://p.example.com/dongles/open/x"}
+		c.Screen = &Screen{Name: "Board", URL: "https://p.example.com/devices/dongles/open/x"}
 	}); err != nil {
 		t.Fatal(err)
 	}

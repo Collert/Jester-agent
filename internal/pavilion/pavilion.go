@@ -23,7 +23,7 @@ import (
 
 // Paths on the Pavilion server.
 const (
-	PairPath   = "/dongles/pair"
+	PairPath   = "/devices/dongles/pair"
 	SocketPath = "/ws/dongle"
 )
 

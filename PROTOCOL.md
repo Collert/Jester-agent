@@ -1,6 +1,6 @@
 # Dongle ↔ Pavilion protocol
 
-Pavilion's side lives in Pavilion's `dongles` app (`dongles/views.py`, `dongles/socket.py`, `dongles/pairing.py`).
+Pavilion's side lives in Pavilion's `devices` app (`devices/views.py`, `devices/socket.py`, `devices/pairing.py`).
 The agent's side is `internal/pavilion`. Change both together.
 
 ## 1. Pairing
@@ -10,7 +10,7 @@ for 15 minutes). The person types it, with Pavilion's address, on their phone du
 dongle is online it sends:
 
 ```
-POST https://<pavilion>/dongles/pair
+POST https://<pavilion>/devices/dongles/pair
 Content-Type: application/json
 
 {
@@ -54,7 +54,7 @@ start". Any other close just reconnects.
 
 ```json
 {"type": "config", "name": "Front counter TV", "store": "Juniper Lane",
- "screen": {"name": "Window specials", "url": "/dongles/open/<signed>"},
+ "screen": {"name": "Window specials", "url": "/devices/dongles/open/<signed>"},
  "orientation": "landscape"}
 ```
 
