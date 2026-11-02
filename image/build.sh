@@ -21,6 +21,7 @@ git clone --quiet --depth 1 --branch "$PIGEN_TAG" https://github.com/RPi-Distro/
 # The stage and what it installs go inside pi-gen: its Docker build only sees that folder.
 cp -r stage-jester pi-gen/
 chmod +x pi-gen/stage-jester/prerun.sh pi-gen/stage-jester/*/*.sh # pi-gen skips scripts that aren't executable
+touch pi-gen/stage2/SKIP_IMAGES # stage2 would also save plain Raspberry Pi OS Lite ("-lite"): only ours is wanted
 files=pi-gen/stage-jester/00-agent/files
 mkdir -p "$files/bin"
 cp "$BIN" "$files/bin/"
