@@ -299,7 +299,7 @@ func (f *fakeCDP) handler(t *testing.T) http.Handler {
 }
 
 // pairedWithScreen is a paired dongle told to show a screen, steering a browser at cdp.
-func pairedWithScreen(t *testing.T, cdp string, restart string) *Agent {
+func pairedWithScreen(t *testing.T, cdp string, restart string, starved ...func() bool) *Agent {
 	t.Helper()
 	st, _ := store.Open(filepath.Join(t.TempDir(), "agent.db"))
 	t.Cleanup(func() { st.Close() })
@@ -312,6 +312,9 @@ func pairedWithScreen(t *testing.T, cdp string, restart string) *Agent {
 	fake.Remember("Juniper-Staff")
 	a := New(Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST",
 		Browser: &browser.Browser{CDP: cdp, RestartCmd: restart}})
+	if len(starved) > 0 {
+		a.Starved = starved[0]
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go a.Run(ctx)
@@ -350,6 +353,29 @@ func TestBrowserRestartedOnlyWhenHungLong(t *testing.T) {
 		t.Fatalf("a browser that's been quiet a short while is left alone, restarted %d times", n)
 	}
 	waitFor(t, "a restart", func() bool { return a.Browser.Restarts() > 0 })
+}
+
+func TestStarvedBrowserIsNotRestarted(t *testing.T) {
+	BrowserCheck, BrowserHungAfter, browser.CallTimeout = 20*time.Millisecond, 200*time.Millisecond, 30*time.Millisecond
+	defer func() {
+		BrowserCheck, BrowserHungAfter, browser.CallTimeout = 15*time.Second, 2*time.Minute, 8*time.Second
+	}()
+	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", hung: true}
+	server := httptest.NewServer(cdp.handler(t))
+	defer server.Close()
+	var mu sync.Mutex
+	starved := true
+	a := pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "jester-test-no-such-command",
+		func() bool { mu.Lock(); defer mu.Unlock(); return starved })
+
+	time.Sleep(700 * time.Millisecond)
+	if n := a.Browser.Restarts(); n != 0 {
+		t.Fatalf("a browser waiting for memory is left alone, restarted %d times", n)
+	}
+	mu.Lock()
+	starved = false
+	mu.Unlock()
+	waitFor(t, "a restart once the Pi has memory and the browser still doesn't answer", func() bool { return a.Browser.Restarts() > 0 })
 }
 
 func TestNewScreenOpensWhileThePageIsBusy(t *testing.T) {

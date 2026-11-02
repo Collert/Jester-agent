@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,6 +79,35 @@ func connector() (name, mode string) {
 func Resolution() string {
 	_, mode := connector()
 	return mode
+}
+
+// MemoryStarved: for the last 10 seconds the Pi spent a good part of its time with everything waiting for memory
+// (swapping), so a program that doesn't answer is starved, not hung. From the kernel's pressure figures
+// (/proc/pressure/memory, "psi=1" on the kernel command line); false where there are none.
+func MemoryStarved() bool {
+	raw, err := os.ReadFile("/proc/pressure/memory")
+	if err != nil {
+		return false
+	}
+	full, ok := fullAvg10(string(raw))
+	return ok && full >= 10
+}
+
+// fullAvg10 reads the "full avg10=" figure (percent of time) from a pressure file.
+func fullAvg10(text string) (float64, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "full" {
+			continue
+		}
+		for _, kv := range f[1:] {
+			if v, ok := strings.CutPrefix(kv, "avg10="); ok {
+				n, err := strconv.ParseFloat(v, 64)
+				return n, err == nil
+			}
+		}
+	}
+	return 0, false
 }
 
 // Rotator turns the picture with wlr-randr (Cage supports it). Env must reach Cage's Wayland socket.

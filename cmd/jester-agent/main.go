@@ -100,6 +100,9 @@ func main() {
 		shell = "http://127.0.0.1:" + port + "/"
 	}
 	opts := agent.Options{Store: st, Net: nm, Browser: br, ShellURL: shell, Version: version, Reboot: *rebootCmd, Hardware: *hardwareID}
+	if !*fake {
+		opts.Starved = device.MemoryStarved
+	}
 	if *rotate && !*fake {
 		opts.Rotator = device.Rotator{Env: append(browserEnv, "WAYLAND_DISPLAY="+env("WAYLAND_DISPLAY", "wayland-0"))}
 	}

@@ -14,6 +14,7 @@
   "VideoCaptureAllowedUrls": ["https://*", "http://*"],
   "AutoplayAllowed": true,
 
+  "GenAILocalFoundationalModelSettings": 1,
   "TranslateEnabled": false,
   "PasswordManagerEnabled": false
 }

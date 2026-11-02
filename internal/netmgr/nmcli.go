@@ -26,6 +26,9 @@ type NM struct {
 	mu         sync.Mutex
 	lastScan   []Network
 	lastScanAt time.Time
+	lastStatus Status
+
+	run func(ctx context.Context, args ...string) (string, error) // tests stand in for nmcli
 }
 
 // scanFresh: how long a list of networks is shown again without asking NetworkManager (each nmcli is a fraction of a
@@ -38,6 +41,9 @@ func NewNM(wifi, ethernet string) *NM { return &NM{Wifi: wifi, Ethernet: etherne
 func (m *NM) nmcli(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if m.run != nil {
+		return m.run(ctx, args...)
+	}
 	cmd := exec.CommandContext(ctx, "nmcli", args...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -222,8 +228,16 @@ func (m *NM) Status(ctx context.Context) Status {
 	var st Status
 	out, err := m.nmcli(ctx, 5*time.Second, "-t", "-e", "yes", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status")
 	if err != nil {
-		return st
+		// nmcli not answering in time says the Pi is busy, not that the network went away: what was true last.
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.lastStatus
 	}
+	defer func() {
+		m.mu.Lock()
+		m.lastStatus = st
+		m.mu.Unlock()
+	}()
 	for _, line := range strings.Split(out, "\n") {
 		f := splitTerse(line)
 		if len(f) < 4 || !strings.HasPrefix(f[2], "connected") { // "connected", or "connected (externally)"

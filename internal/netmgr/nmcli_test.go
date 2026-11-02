@@ -1,6 +1,10 @@
 package netmgr
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestSplitTerse(t *testing.T) {
 	got := splitTerse(`My\:Net:72:WPA2`)
@@ -47,5 +51,30 @@ func TestBars(t *testing.T) {
 		if got := Bars(signal); got != want {
 			t.Errorf("Bars(%d) = %d, want %d", signal, got, want)
 		}
+	}
+}
+
+// A busy Pi's nmcli can time out: that's not the network going away.
+func TestStatusKeepsLastWhenNmcliFails(t *testing.T) {
+	fail := false
+	m := NewNM("wlan0", "")
+	m.run = func(ctx context.Context, args ...string) (string, error) {
+		if fail {
+			return "", errors.New("nmcli device: signal: killed")
+		}
+		switch args[len(args)-1] {
+		case "status":
+			return "wlan0:wifi:connected:jester-wifi\n", nil
+		case "wlan0":
+			return "192.168.1.20/24\n", nil
+		}
+		return "*:Cafe:70\n", nil
+	}
+	if st := m.Status(context.Background()); !st.WifiConnected || st.IP != "192.168.1.20" || st.SSID != "Cafe" {
+		t.Fatalf("status %+v", st)
+	}
+	fail = true
+	if st := m.Status(context.Background()); !st.WifiConnected || st.IP != "192.168.1.20" {
+		t.Errorf("after nmcli timed out: %+v, want the last status", st)
 	}
 }

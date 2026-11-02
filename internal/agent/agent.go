@@ -54,7 +54,7 @@ var (
 	StatusEvery      = 30 * time.Second // heartbeat to Pavilion
 	NetCheckEvery    = 10 * time.Second
 	BrowserCheck     = 15 * time.Second
-	BrowserHungAfter = 2 * time.Minute         // no answer from the browser this long: restart it (a Pi Zero is slow, not hung, for a while)
+	BrowserHungAfter = 2 * time.Minute         // no answer from the browser this long (not counting time the Pi is short of memory): restart it
 	OpenGrace        = time.Minute             // after sending the browser somewhere, how long the page may take to arrive
 	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
 	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
@@ -98,6 +98,9 @@ type Options struct {
 	Version  string
 	Reboot   string // command line run for Pavilion's Restart ("" = restart the browser only)
 	Hardware string // short ID; "" reads it from the Pi
+	// Starved: the system is short of memory right now, so a browser that doesn't answer is waiting, not hung
+	// (device.MemoryStarved). nil: never.
+	Starved func() bool
 }
 
 // Agent runs the dongle.
@@ -787,6 +790,7 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 	tick := time.NewTicker(BrowserCheck)
 	defer tick.Stop()
 	var hungSince, sentAt time.Time
+	starvedLogged := false
 	lastWant := "" // the screen the browser was last sent to (it lands on another address: the link signs in, then redirects)
 	open := func(want string) {
 		lastWant, sentAt = want, time.Now()
@@ -813,10 +817,18 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 			if errors.Is(err, browser.ErrNoCDP) && a.Browser.CDP == "" {
 				continue // not steerable: the agent's page navigates by itself
 			}
-			if hungSince.IsZero() {
+			if a.Starved != nil && a.Starved() {
+				// Waiting for memory, not hung: a restart would only start the slow load over. The clock starts once
+				// the Pi has memory to spare again.
+				if !starvedLogged {
+					a.logf("browser", "The Pi is short of memory; waiting for the browser instead of restarting it")
+					starvedLogged = true
+				}
+				hungSince = time.Time{}
+			} else if hungSince.IsZero() {
 				hungSince = time.Now()
 			}
-			if time.Since(hungSince) >= BrowserHungAfter && a.Browser.CanRestart() && a.Browser.Uptime() > BrowserHungAfter {
+			if !hungSince.IsZero() && time.Since(hungSince) >= BrowserHungAfter && a.Browser.CanRestart() && a.Browser.Uptime() > BrowserHungAfter {
 				a.logf("browser", "The browser hasn't answered for %s; restarting it", BrowserHungAfter)
 				a.Browser.Restart()
 				hungSince = time.Time{}
@@ -828,7 +840,7 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 			}
 			continue
 		}
-		hungSince = time.Time{}
+		hungSince, starvedLogged = time.Time{}, false
 		if browser.IsErrorPage(current) && !a.onShell(current) {
 			a.logf("browser", "The screen didn't load; showing the dongle's page and trying again shortly")
 			a.update(func(s *State) { s.ScreenFailed = time.Now() })

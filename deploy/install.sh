@@ -18,6 +18,8 @@ apt-get update -qq
 apt-get install -y -qq network-manager dnsmasq-base cage wlr-randr curl fonts-dejavu-core
 apt-get install -y -qq chromium-browser 2>/dev/null || apt-get install -y -qq chromium
 [ -x /usr/bin/chromium-browser ] || ln -sf /usr/bin/chromium /usr/bin/chromium-browser
+# The kiosk runs this, not the chromium-browser script (see jester-kiosk.service).
+[ -x /usr/lib/chromium/chromium ] || { echo "No /usr/lib/chromium/chromium: fix ExecStart in jester-kiosk.service"; exit 1; }
 
 echo "Kiosk user…"
 id kiosk >/dev/null 2>&1 || useradd -m -G video,render,input,audio -s /usr/sbin/nologin kiosk
@@ -37,6 +39,12 @@ vm.swappiness=100
 vm.page-cluster=0
 EOF
 apt-get purge -y -qq dphys-swapfile 2>/dev/null || true
+# Services a dongle has no use for (cellular modems, Bluetooth, mounting USB disks, batteries, hotkeys): each is
+# memory the browser needs. Masked, since some start whenever another program asks for them.
+for s in ModemManager bluetooth hciuart udisks2 upower triggerhappy; do
+	systemctl disable $NOW "$s.service" 2>/dev/null || true
+	systemctl mask "$s.service" 2>/dev/null || true
+done
 
 echo "Agent…"
 install -m 0755 "$BIN" /usr/local/bin/jester-agent
