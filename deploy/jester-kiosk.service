@@ -2,6 +2,10 @@
 # systemd starts it again whenever it exits; the agent restarts it when it stops answering.
 # --no-memcheck: Raspberry Pi's chromium launcher otherwise stops at a "less than 1GB of RAM" dialog on a Zero 2 W,
 # and nobody has a keyboard to click "Launch anyway".
+# --enable-low-end-device-mode through --disk-cache-size keep it in a Pi Zero 2 W's 416 MB: low-RAM mode (as on cheap
+# Android phones), one page process that's reused instead of a fresh one per site, no back-forward cache (which keeps
+# the page you left alive), no spare process started in advance, and no background downloads (updates, sync, crash
+# reports) competing with the screen.
 [Unit]
 Description=Pavilion visual dongle kiosk browser
 After=systemd-user-sessions.service jester-agent.service plymouth-quit-wait.service
@@ -22,7 +26,11 @@ UtmpMode=user
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/state && exit 0; sleep 1; done; exit 0'
 ExecStart=/usr/bin/cage -s -- /usr/bin/chromium-browser --no-memcheck \
     --kiosk --ozone-platform=wayland --noerrdialogs --disable-infobars --no-first-run \
-    --disable-session-crashed-bubble --disable-features=Translate,TranslateUI --disable-pinch \
+    --disable-session-crashed-bubble --disable-pinch \
+    --enable-low-end-device-mode --renderer-process-limit=1 --disable-site-isolation-trials \
+    --disable-features=Translate,TranslateUI,BackForwardCache,SpareRendererForSitePerProcess,MediaRouter \
+    --disable-background-networking --disable-component-update --disable-sync --disable-breakpad \
+    --disable-extensions --disk-cache-size=33554432 \
     --overscroll-history-navigation=0 --check-for-update-interval=31536000 --password-store=basic \
     --autoplay-policy=no-user-gesture-required \
     --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \

@@ -225,6 +225,15 @@ func (a *Agent) HotspotOn() bool {
 
 // PortalSeen: a phone loaded the setup page.
 func (a *Agent) PortalSeen() {
+	a.mu.Lock()
+	quiet := a.state.Phase != PhasePair // nothing on the TV changes: don't nudge it (or the browser check) for every page
+	if quiet {
+		a.state.PortalSeen = time.Now()
+	}
+	a.mu.Unlock()
+	if quiet {
+		return
+	}
 	a.update(func(s *State) {
 		s.PortalSeen = time.Now()
 		if s.Phase == PhasePair {

@@ -368,3 +368,31 @@ func TestNewScreenOpensWhileThePageIsBusy(t *testing.T) {
 		t.Errorf("opened once, not on every check: %q", cdp.navigates)
 	}
 }
+
+// Every page the phone loads marks the setup page as in use, but only the first one changes what the TV shows: the
+// rest mustn't make the TV (and the browser check) do anything on a Pi Zero that's busy enough already.
+func TestPortalPagesDontNudgeTheTV(t *testing.T) {
+	a := New(Options{Store: nil, Net: netmgr.NewFake(), ShellURL: "http://127.0.0.1:8080/", Hardware: "TEST"})
+	a.state.Phase = PhasePair
+	changes, stop := a.Subscribe()
+	defer stop()
+	a.PortalSeen()
+	if a.State().Phase != PhasePortal {
+		t.Fatalf("phase %s, want portal", a.State().Phase)
+	}
+	<-changes
+	<-a.browserCh
+	first := a.State().PortalSeen
+	time.Sleep(10 * time.Millisecond)
+	a.PortalSeen()
+	if !a.State().PortalSeen.After(first) {
+		t.Error("the second page load wasn't noted")
+	}
+	select {
+	case <-changes:
+		t.Error("the TV was nudged though nothing on it changed")
+	case <-a.browserCh:
+		t.Error("the browser check was nudged though nothing changed")
+	default:
+	}
+}

@@ -9,6 +9,10 @@ func TestNormalizeBase(t *testing.T) {
 		"pavilion.example.com/admin/":     "https://pavilion.example.com",
 		"http://192.168.1.5:8000":         "http://192.168.1.5:8000",
 		"pavilion.example.com:8443":       "https://pavilion.example.com:8443",
+		"192.168.30.151:8000":             "http://192.168.30.151:8000",
+		"10.0.0.5":                        "http://10.0.0.5",
+		"localhost:8000":                  "http://localhost:8000",
+		"https://192.168.1.5":             "https://192.168.1.5",
 	}
 	for in, want := range good {
 		got, err := NormalizeBase(in)

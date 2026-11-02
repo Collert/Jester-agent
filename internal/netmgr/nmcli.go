@@ -23,9 +23,14 @@ type NM struct {
 	Wifi     string // the Wi-Fi interface, usually wlan0
 	Ethernet string // usually eth0; "" to ignore the cable
 
-	mu       sync.Mutex
-	lastScan []Network
+	mu         sync.Mutex
+	lastScan   []Network
+	lastScanAt time.Time
 }
+
+// scanFresh: how long a list of networks is shown again without asking NetworkManager (each nmcli is a fraction of a
+// second of a Pi Zero's time, and the setup page asks on every load).
+const scanFresh = 30 * time.Second
 
 // NewNM returns a manager for these interfaces.
 func NewNM(wifi, ethernet string) *NM { return &NM{Wifi: wifi, Ethernet: ethernet} }
@@ -94,6 +99,12 @@ func parseScan(out, skip string) []Network {
 }
 
 func (m *NM) Scan(ctx context.Context, rescan bool) ([]Network, error) {
+	m.mu.Lock()
+	if !rescan && m.lastScan != nil && time.Since(m.lastScanAt) < scanFresh {
+		defer m.mu.Unlock()
+		return m.lastScan, nil
+	}
+	m.mu.Unlock()
 	flag := "no"
 	if rescan {
 		flag = "yes"
@@ -110,7 +121,7 @@ func (m *NM) Scan(ctx context.Context, rescan bool) ([]Network, error) {
 	nets := parseScan(out, "")
 	// While the hotspot is on, a rescan usually finds only ourselves (or nothing): keep the last good list.
 	if len(nets) > 0 || m.lastScan == nil {
-		m.lastScan = nets
+		m.lastScan, m.lastScanAt = nets, time.Now()
 	}
 	return m.lastScan, nil
 }

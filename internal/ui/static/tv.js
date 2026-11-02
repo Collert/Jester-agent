@@ -2,6 +2,7 @@
 // ticks the clock, and, when the agent can't steer the browser, takes itself to the screen it should show.
 const app = document.getElementById("app");
 let busy = false, again = false;
+let shown = null; // the HTML last swapped in: app.innerHTML never reads back exactly as the server sent it
 
 async function refresh() {
     if (busy) { again = true; return; }
@@ -10,7 +11,8 @@ async function refresh() {
         const res = await fetch("/?partial=1", { cache: "no-store" });
         if (res.ok) {
             const html = await res.text();
-            if (html !== app.innerHTML) app.innerHTML = html;  // our own server's HTML, rendered and escaped there
+            // Only when it changed: a swap redraws the whole TV and restarts its animations, which a Pi Zero feels.
+            if (html !== shown) { app.innerHTML = html; shown = html; }  // our own server's HTML, rendered and escaped there
             follow();
         }
     } catch { /* the agent is restarting: the stream reconnects and refreshes */ }

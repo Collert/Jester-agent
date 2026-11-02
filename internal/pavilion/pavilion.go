@@ -35,15 +35,15 @@ const (
 var hostRe = regexp.MustCompile(`^(?i)[a-z0-9-]+(\.[a-z0-9-]+)*(:\d{1,5})?$`)
 
 // NormalizeBase turns what someone typed ("pavilion.yourplace.com", "https://…/", "http://192.168.1.5:8000") into
-// a base URL. Without a scheme it's https; plain http only when typed (a Pavilion on the local network in
-// development).
+// a base URL. Without a scheme it's https, except for an IP address or localhost: that's a Pavilion on the local
+// network in development, which has no certificate (typing https:// still gets https).
 func NormalizeBase(input string) (string, error) {
 	s := strings.TrimSpace(input)
-	scheme := "https"
+	scheme := ""
 	lower := strings.ToLower(s)
 	switch {
 	case strings.HasPrefix(lower, "https://"):
-		s = s[len("https://"):]
+		scheme, s = "https", s[len("https://"):]
 	case strings.HasPrefix(lower, "http://"):
 		scheme, s = "http", s[len("http://"):]
 	}
@@ -53,6 +53,16 @@ func NormalizeBase(input string) (string, error) {
 	}
 	if !hostRe.MatchString(s) || (!strings.Contains(s, ".") && !strings.HasPrefix(strings.ToLower(s), "localhost")) {
 		return "", errors.New("that doesn't look like an address yet, e.g. pavilion.yourplace.com")
+	}
+	if scheme == "" {
+		scheme = "https"
+		host := s
+		if h, _, err := net.SplitHostPort(s); err == nil {
+			host = h
+		}
+		if net.ParseIP(host) != nil || strings.EqualFold(host, "localhost") {
+			scheme = "http"
+		}
 	}
 	return scheme + "://" + strings.ToLower(s), nil
 }
