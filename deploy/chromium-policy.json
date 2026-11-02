@@ -1,0 +1,19 @@
+{
+  "LocalNetworkAccessAllowedForUrls": ["*"],
+  "LocalNetworkAllowedForUrls": ["*"],
+  "LoopbackNetworkAllowedForUrls": ["*"],
+
+  "DefaultGeolocationSetting": 1,
+  "DefaultNotificationsSetting": 1,
+  "DefaultSensorsSetting": 1,
+  "DefaultIdleDetectionSetting": 1,
+  "ClipboardAllowedForUrls": ["*"],
+  "WindowManagementAllowedForUrls": ["*"],
+  "LocalFontsAllowedForUrls": ["*"],
+  "AudioCaptureAllowedUrls": ["https://*", "http://*"],
+  "VideoCaptureAllowedUrls": ["https://*", "http://*"],
+  "AutoplayAllowed": true,
+
+  "TranslateEnabled": false,
+  "PasswordManagerEnabled": false
+}

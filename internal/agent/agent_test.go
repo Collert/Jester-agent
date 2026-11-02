@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/collert/jester-agent/internal/browser"
 	"github.com/collert/jester-agent/internal/netmgr"
 	"github.com/collert/jester-agent/internal/store"
 )
@@ -230,5 +232,139 @@ func TestWifiLostTurnsSetupBackOn(t *testing.T) {
 	waitFor(t, "back to idle", func() bool { return a.State().Phase == PhaseIdle })
 	if st.Config().WifiSSID != "Juniper-Guest" || !st.Config().Paired() {
 		t.Errorf("after the new Wi-Fi: %+v", st.Config())
+	}
+}
+
+// fakeCDP is a browser's DevTools port: Page.navigate answers slowly (a Pi Zero opening a screen) and lands on
+// another address (the screen's link redirects); Runtime.evaluate says where the page is, or never answers (hung).
+type fakeCDP struct {
+	mu        sync.Mutex
+	href      string
+	navigates []string
+	hung      bool
+	navDelay  time.Duration
+	landOn    string
+}
+
+func (f *fakeCDP) handler(t *testing.T) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode([]map[string]string{{"type": "page", "url": f.href, "webSocketDebuggerUrl": "ws://" + r.Host + "/page"}})
+	})
+	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.CloseNow()
+		_, raw, err := ws.Read(r.Context())
+		if err != nil {
+			return
+		}
+		var m struct {
+			ID     int64             `json:"id"`
+			Method string            `json:"method"`
+			Params map[string]string `json:"params"`
+		}
+		_ = json.Unmarshal(raw, &m)
+		f.mu.Lock()
+		var result any = map[string]any{}
+		switch m.Method {
+		case "Page.navigate":
+			f.navigates = append(f.navigates, m.Params["url"])
+			f.href = m.Params["url"]
+			if f.landOn != "" && !strings.HasPrefix(f.href, "http://127.0.0.1:8080/") {
+				f.href = f.landOn
+			}
+			delay := f.navDelay
+			f.mu.Unlock()
+			time.Sleep(delay)
+		case "Runtime.evaluate":
+			hung := f.hung
+			result = map[string]any{"result": map[string]any{"value": f.href}}
+			f.mu.Unlock()
+			if hung {
+				<-r.Context().Done()
+				return
+			}
+		default:
+			f.mu.Unlock()
+		}
+		reply, _ := json.Marshal(map[string]any{"id": m.ID, "result": result})
+		_ = ws.Write(r.Context(), websocket.MessageText, reply)
+	})
+	return mux
+}
+
+// pairedWithScreen is a paired dongle told to show a screen, steering a browser at cdp.
+func pairedWithScreen(t *testing.T, cdp string, restart string) *Agent {
+	t.Helper()
+	st, _ := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	t.Cleanup(func() { st.Close() })
+	_, _ = st.Update(func(c *store.Config) {
+		c.PavilionURL, c.Token, c.WifiSSID = "http://127.0.0.1:1", "7.s3cret", "Juniper-Staff"
+		c.Screen = &store.Screen{Name: "Order board", URL: "https://pavilion.test/devices/dongles/open/abc"}
+	})
+	fake := netmgr.NewFake()
+	fake.Delay = time.Millisecond
+	fake.Remember("Juniper-Staff")
+	a := New(Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST",
+		Browser: &browser.Browser{CDP: cdp, RestartCmd: restart}})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go a.Run(ctx)
+	return a
+}
+
+func TestSlowScreenIsOpenedOnce(t *testing.T) {
+	BrowserCheck, browser.CallTimeout = 20*time.Millisecond, 50*time.Millisecond
+	defer func() { BrowserCheck, browser.CallTimeout = 15*time.Second, 8*time.Second }()
+	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", navDelay: 200 * time.Millisecond, landOn: "https://pavilion.test/screens/order-board"}
+	server := httptest.NewServer(cdp.handler(t))
+	defer server.Close()
+	pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "")
+
+	waitFor(t, "the screen opened", func() bool { cdp.mu.Lock(); defer cdp.mu.Unlock(); return len(cdp.navigates) > 0 })
+	time.Sleep(600 * time.Millisecond) // 30 checks
+	cdp.mu.Lock()
+	defer cdp.mu.Unlock()
+	if len(cdp.navigates) != 1 {
+		t.Errorf("a screen that's slow to open is opened once, not again on every check: %q", cdp.navigates)
+	}
+}
+
+func TestBrowserRestartedOnlyWhenHungLong(t *testing.T) {
+	BrowserCheck, BrowserHungAfter, browser.CallTimeout = 20*time.Millisecond, 400*time.Millisecond, 30*time.Millisecond
+	defer func() {
+		BrowserCheck, BrowserHungAfter, browser.CallTimeout = 15*time.Second, 2*time.Minute, 8*time.Second
+	}()
+	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", hung: true}
+	server := httptest.NewServer(cdp.handler(t))
+	defer server.Close()
+	a := pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "jester-test-no-such-command")
+
+	time.Sleep(250 * time.Millisecond)
+	if n := a.Browser.Restarts(); n != 0 {
+		t.Fatalf("a browser that's been quiet a short while is left alone, restarted %d times", n)
+	}
+	waitFor(t, "a restart", func() bool { return a.Browser.Restarts() > 0 })
+}
+
+func TestNewScreenOpensWhileThePageIsBusy(t *testing.T) {
+	BrowserCheck, browser.CallTimeout = 20*time.Millisecond, 30*time.Millisecond
+	defer func() { BrowserCheck, browser.CallTimeout = 15*time.Second, 8*time.Second }()
+	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", hung: true} // the page never answers; the browser does
+	server := httptest.NewServer(cdp.handler(t))
+	defer server.Close()
+	pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "")
+
+	waitFor(t, "the screen opened", func() bool { cdp.mu.Lock(); defer cdp.mu.Unlock(); return len(cdp.navigates) > 0 })
+	time.Sleep(300 * time.Millisecond)
+	cdp.mu.Lock()
+	defer cdp.mu.Unlock()
+	if len(cdp.navigates) != 1 {
+		t.Errorf("opened once, not on every check: %q", cdp.navigates)
 	}
 }

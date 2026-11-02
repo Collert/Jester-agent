@@ -136,6 +136,10 @@ func (b *Browser) Uptime() time.Duration {
 	return time.Since(time.UnixMilli(ms))
 }
 
+// CallTimeout is how long one DevTools command may take. Page.navigate answers only once the new page starts
+// arriving, which on a Pi Zero 2 W can take a while; a timeout then doesn't mean the navigation failed.
+var CallTimeout = 8 * time.Second
+
 // ErrNoCDP: the browser can't be steered (no DevTools port, or it isn't up yet).
 var ErrNoCDP = errors.New("browser: DevTools not available")
 
@@ -169,14 +173,20 @@ func (b *Browser) page(ctx context.Context) (target, error) {
 	return target{}, fmt.Errorf("%w: no page", ErrNoCDP)
 }
 
-// call sends one DevTools command to the page and waits for its answer.
-func (b *Browser) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+// call sends one DevTools command to the page and waits for its answer. Running out of CallTimeout is an error that
+// is context.DeadlineExceeded, however the connection reported it (often as "use of closed network connection").
+func (b *Browser) call(ctx context.Context, method string, params any) (_ json.RawMessage, err error) {
 	t, err := b.page(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
+	defer func() {
+		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("%w (%v)", context.DeadlineExceeded, err)
+		}
+	}()
 	ws, _, err := websocket.Dial(ctx, t.WS, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoCDP, err)

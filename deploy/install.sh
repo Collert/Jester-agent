@@ -20,8 +20,23 @@ apt-get install -y -qq chromium-browser 2>/dev/null || apt-get install -y -qq ch
 [ -x /usr/bin/chromium-browser ] || ln -sf /usr/bin/chromium /usr/bin/chromium-browser
 
 echo "Kiosk user…"
-id kiosk >/dev/null 2>&1 || useradd -m -G video,render,input -s /usr/sbin/nologin kiosk
+id kiosk >/dev/null 2>&1 || useradd -m -G video,render,input,audio -s /usr/sbin/nologin kiosk
+usermod -aG audio kiosk # screens play sound (music, order callouts) through the TV
 KIOSK_UID=$(id -u kiosk)
+
+echo "Memory…"
+# A Pi Zero 2 W leaves Linux about 416 MB and Chromium wants more. Swapping to the SD card stalls everything for
+# seconds at a time (and wears the card out): swap to compressed memory (zram) instead.
+apt-get install -y -qq zram-tools
+cat > /etc/default/zramswap <<EOF
+PERCENT=60
+PRIORITY=100
+EOF
+cat > /etc/sysctl.d/90-jester-zram.conf <<EOF
+vm.swappiness=100
+vm.page-cluster=0
+EOF
+apt-get purge -y -qq dphys-swapfile 2>/dev/null || true
 
 echo "Agent…"
 install -m 0755 "$BIN" /usr/local/bin/jester-agent
@@ -30,12 +45,16 @@ install -d /etc/NetworkManager/dnsmasq-shared.d
 install -m 0644 deploy/captive-dnsmasq.conf /etc/NetworkManager/dnsmasq-shared.d/jester-captive.conf
 sed "s/@KIOSK_UID@/$KIOSK_UID/" deploy/jester-agent.service > /etc/systemd/system/jester-agent.service
 install -m 0644 deploy/jester-kiosk.service /etc/systemd/system/jester-kiosk.service
+# The kiosk only shows Pavilion's screens, and nobody can answer a permission prompt on it (local network, location,
+# camera, …): Chromium's policies allow them all without asking.
+install -d /etc/chromium/policies/managed
+install -m 0644 deploy/chromium-policy.json /etc/chromium/policies/managed/jester.json
 
 # Wi-Fi must be allowed (Bookworm keeps it blocked until a country is set): set yours with raspi-config.
 rfkill unblock wifi || true
 
 [ -z "$NOW" ] || systemctl daemon-reload
 systemctl disable $NOW getty@tty1.service 2>/dev/null || true
-systemctl enable $NOW NetworkManager.service jester-agent.service jester-kiosk.service
+systemctl enable $NOW NetworkManager.service zramswap.service jester-agent.service jester-kiosk.service
 systemctl set-default graphical.target
 echo "Done. The TV should show “Scan to start”."

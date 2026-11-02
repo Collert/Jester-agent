@@ -4,6 +4,8 @@
 Description=Pavilion visual dongle agent
 Wants=network.target NetworkManager.service
 After=NetworkManager.service
+# Crashing in a loop shouldn't stop it for good: keep trying.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -12,14 +14,13 @@ Environment=JESTER_DB=/var/lib/jester/agent.db
 # The kiosk browser runs as its own unit (it needs a login seat, and Chromium doesn't run as root); the agent steers
 # it through its DevTools port and restarts that unit when it hangs.
 Environment=JESTER_CDP=127.0.0.1:9222
-Environment=JESTER_BROWSER_RESTART=systemctl restart jester-kiosk.service
+# Quoted: unquoted, systemd splits it at the spaces and the command would be just "systemctl".
+Environment="JESTER_BROWSER_RESTART=systemctl restart jester-kiosk.service"
 # Where Cage's Wayland socket is (the kiosk user's runtime dir), for turning the picture with wlr-randr.
 # install.sh fills in the kiosk user's id.
 Environment=XDG_RUNTIME_DIR=/run/user/@KIOSK_UID@
 Restart=always
 RestartSec=2
-# Crashing in a loop shouldn't stop it for good: keep trying.
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target

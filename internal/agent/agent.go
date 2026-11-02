@@ -47,15 +47,17 @@ const (
 
 // Timings. Variables so tests can shorten them.
 var (
-	LostWifiAfter   = 2 * time.Minute  // no network this long while paired: turn the setup Wi-Fi back on
-	RetryWifiEvery  = 5 * time.Minute  // in rescue, try the saved Wi-Fi again this often (when nobody's on the setup page)
-	PortalIdleAfter = 3 * time.Minute  // a phone that hasn't loaded the setup page in this long has gone away
-	DoneFor         = 4 * time.Second  // how long "Paired with …" stays up
-	StatusEvery     = 30 * time.Second // heartbeat to Pavilion
-	NetCheckEvery   = 10 * time.Second
-	BrowserCheck    = 15 * time.Second
-	ScreenRetry     = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
-	PhoneGrace      = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
+	LostWifiAfter    = 2 * time.Minute  // no network this long while paired: turn the setup Wi-Fi back on
+	RetryWifiEvery   = 5 * time.Minute  // in rescue, try the saved Wi-Fi again this often (when nobody's on the setup page)
+	PortalIdleAfter  = 3 * time.Minute  // a phone that hasn't loaded the setup page in this long has gone away
+	DoneFor          = 4 * time.Second  // how long "Paired with …" stays up
+	StatusEvery      = 30 * time.Second // heartbeat to Pavilion
+	NetCheckEvery    = 10 * time.Second
+	BrowserCheck     = 15 * time.Second
+	BrowserHungAfter = 2 * time.Minute         // no answer from the browser this long: restart it (a Pi Zero is slow, not hung, for a while)
+	OpenGrace        = time.Minute             // after sending the browser somewhere, how long the page may take to arrive
+	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
+	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
 )
 
 // State is everything the pages need to know.
@@ -287,8 +289,8 @@ func (a *Agent) hotspotUp(ctx context.Context) {
 // runSetup: not paired. The setup Wi-Fi stays on until a phone gives it details that work.
 func (a *Agent) runSetup(ctx context.Context) {
 	a.adoptPreconfigured(ctx) // before the setup page can answer
+	a.hotspotUp(ctx)          // before "Scan to start": the QR code is for this Wi-Fi
 	a.setPhase(PhasePair, "")
-	a.hotspotUp(ctx)
 	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
 	for {
@@ -775,8 +777,20 @@ func (a *Agent) onShell(url string) bool { return strings.HasPrefix(url, a.Shell
 func (a *Agent) steerBrowser(ctx context.Context) {
 	tick := time.NewTicker(BrowserCheck)
 	defer tick.Stop()
-	failures := 0
-	lastWant := ""
+	var hungSince, sentAt time.Time
+	lastWant := "" // the screen the browser was last sent to (it lands on another address: the link signs in, then redirects)
+	open := func(want string) {
+		lastWant, sentAt = want, time.Now()
+		if err := a.Browser.Navigate(ctx, want); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				// Slow, not failed: the page is most likely still loading. Opening it again would only start it over.
+				a.logf("browser", "%s is taking a while to open", want)
+				return
+			}
+			a.logf("browser", "Couldn't open %s: %v", want, err)
+			lastWant = ""
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -790,30 +804,36 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 			if errors.Is(err, browser.ErrNoCDP) && a.Browser.CDP == "" {
 				continue // not steerable: the agent's page navigates by itself
 			}
-			failures++
-			if failures >= 3 && a.Browser.CanRestart() && a.Browser.Uptime() > time.Minute {
-				a.logf("browser", "The browser isn't answering; restarting it")
+			if hungSince.IsZero() {
+				hungSince = time.Now()
+			}
+			if time.Since(hungSince) >= BrowserHungAfter && a.Browser.CanRestart() && a.Browser.Uptime() > BrowserHungAfter {
+				a.logf("browser", "The browser hasn't answered for %s; restarting it", BrowserHungAfter)
 				a.Browser.Restart()
-				failures = 0
+				hungSince = time.Time{}
+			}
+			// A busy page doesn't answer, but the browser itself can still take it somewhere new (a screen just
+			// picked in Pavilion): don't wait for the old page to calm down first.
+			if want != lastWant && !errors.Is(err, browser.ErrNoCDP) {
+				open(want)
 			}
 			continue
 		}
-		failures = 0
+		hungSince = time.Time{}
 		if browser.IsErrorPage(current) && !a.onShell(current) {
 			a.logf("browser", "The screen didn't load; showing the dongle's page and trying again shortly")
 			a.update(func(s *State) { s.ScreenFailed = time.Now() })
 			time.AfterFunc(ScreenRetry+time.Second, a.forceNavigate)
 			want = a.ShellURL
 		}
+		if want == lastWant && time.Since(sentAt) < OpenGrace && !browser.IsErrorPage(current) {
+			continue // sent there a moment ago: until the page arrives the browser still says where it was
+		}
 		onWant := current == want || (want == a.ShellURL && a.onShell(current)) ||
 			(want != a.ShellURL && !a.onShell(current) && want == lastWant && !browser.IsErrorPage(current))
 		if onWant {
 			continue
 		}
-		if err := a.Browser.Navigate(ctx, want); err != nil {
-			a.logf("browser", "Couldn't open %s: %v", want, err)
-			continue
-		}
-		lastWant = want
+		open(want)
 	}
 }

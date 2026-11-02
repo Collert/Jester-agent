@@ -7,6 +7,7 @@ Description=Pavilion visual dongle kiosk browser
 After=systemd-user-sessions.service jester-agent.service plymouth-quit-wait.service
 Wants=jester-agent.service
 Conflicts=getty@tty1.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -29,7 +30,6 @@ ExecStart=/usr/bin/cage -s -- /usr/bin/chromium-browser --no-memcheck \
     http://127.0.0.1:8080/
 Restart=always
 RestartSec=2
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=graphical.target
