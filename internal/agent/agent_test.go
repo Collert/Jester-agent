@@ -316,17 +316,26 @@ func pairedWithScreen(t *testing.T, cdp string, restart string, starved ...func(
 		a.Starved = starved[0]
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go a.Run(ctx)
+	stopped := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-stopped }) // before the test's timings are put back (cleanups run last first)
+	go func() { a.Run(ctx); close(stopped) }()
 	return a
 }
 
+// browserTimings sets the browser check's timings for one test. Call it before pairedWithScreen: they're put back
+// only once that agent has stopped.
+func browserTimings(t *testing.T, check, hung, call time.Duration) {
+	t.Helper()
+	oldCheck, oldHung, oldCall := BrowserCheck, BrowserHungAfter, browser.CallTimeout
+	BrowserCheck, BrowserHungAfter, browser.CallTimeout = check, hung, call
+	t.Cleanup(func() { BrowserCheck, BrowserHungAfter, browser.CallTimeout = oldCheck, oldHung, oldCall })
+}
+
 func TestSlowScreenIsOpenedOnce(t *testing.T) {
-	BrowserCheck, browser.CallTimeout = 20*time.Millisecond, 50*time.Millisecond
-	defer func() { BrowserCheck, browser.CallTimeout = 15*time.Second, 8*time.Second }()
+	browserTimings(t, 20*time.Millisecond, BrowserHungAfter, 50*time.Millisecond)
 	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", navDelay: 200 * time.Millisecond, landOn: "https://pavilion.test/screens/order-board"}
 	server := httptest.NewServer(cdp.handler(t))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "")
 
 	waitFor(t, "the screen opened", func() bool { cdp.mu.Lock(); defer cdp.mu.Unlock(); return len(cdp.navigates) > 0 })
@@ -339,13 +348,10 @@ func TestSlowScreenIsOpenedOnce(t *testing.T) {
 }
 
 func TestBrowserRestartedOnlyWhenHungLong(t *testing.T) {
-	BrowserCheck, BrowserHungAfter, browser.CallTimeout = 20*time.Millisecond, 400*time.Millisecond, 30*time.Millisecond
-	defer func() {
-		BrowserCheck, BrowserHungAfter, browser.CallTimeout = 15*time.Second, 2*time.Minute, 8*time.Second
-	}()
+	browserTimings(t, 20*time.Millisecond, 400*time.Millisecond, 30*time.Millisecond)
 	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", hung: true}
 	server := httptest.NewServer(cdp.handler(t))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	a := pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "jester-test-no-such-command")
 
 	time.Sleep(250 * time.Millisecond)
@@ -356,13 +362,10 @@ func TestBrowserRestartedOnlyWhenHungLong(t *testing.T) {
 }
 
 func TestStarvedBrowserIsNotRestarted(t *testing.T) {
-	BrowserCheck, BrowserHungAfter, browser.CallTimeout = 20*time.Millisecond, 200*time.Millisecond, 30*time.Millisecond
-	defer func() {
-		BrowserCheck, BrowserHungAfter, browser.CallTimeout = 15*time.Second, 2*time.Minute, 8*time.Second
-	}()
+	browserTimings(t, 20*time.Millisecond, 200*time.Millisecond, 30*time.Millisecond)
 	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", hung: true}
 	server := httptest.NewServer(cdp.handler(t))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	var mu sync.Mutex
 	starved := true
 	a := pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "jester-test-no-such-command",
@@ -379,11 +382,10 @@ func TestStarvedBrowserIsNotRestarted(t *testing.T) {
 }
 
 func TestNewScreenOpensWhileThePageIsBusy(t *testing.T) {
-	BrowserCheck, browser.CallTimeout = 20*time.Millisecond, 30*time.Millisecond
-	defer func() { BrowserCheck, browser.CallTimeout = 15*time.Second, 8*time.Second }()
+	browserTimings(t, 20*time.Millisecond, BrowserHungAfter, 30*time.Millisecond)
 	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", hung: true} // the page never answers; the browser does
 	server := httptest.NewServer(cdp.handler(t))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "")
 
 	waitFor(t, "the screen opened", func() bool { cdp.mu.Lock(); defer cdp.mu.Unlock(); return len(cdp.navigates) > 0 })

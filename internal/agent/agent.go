@@ -278,11 +278,14 @@ func (a *Agent) Uptime() time.Duration { return time.Since(a.start) }
 
 // ---------- running ----------
 
-// Run runs the dongle until ctx ends.
+// Run runs the dongle until ctx ends, and returns once the browser's supervisor and steering have stopped too.
 func (a *Agent) Run(ctx context.Context) {
 	a.logf("agent", "Starting, version %s, dongle %s", a.Version, a.Hardware)
-	go a.Browser.Run(ctx)
-	go a.steerBrowser(ctx)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); a.Browser.Run(ctx) }()
+	go func() { defer wg.Done(); a.steerBrowser(ctx) }()
+	defer wg.Wait()
 	for ctx.Err() == nil {
 		if a.Store.Config().Paired() {
 			a.runPaired(ctx)
