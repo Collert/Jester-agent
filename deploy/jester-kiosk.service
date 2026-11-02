@@ -1,5 +1,7 @@
 # The TV: Cage (a one-window Wayland compositor) running Chromium in kiosk mode on tty1, opening the agent's page.
 # systemd starts it again whenever it exits; the agent restarts it when it stops answering.
+# --no-memcheck: Raspberry Pi's chromium launcher otherwise stops at a "less than 1GB of RAM" dialog on a Zero 2 W,
+# and nobody has a keyboard to click "Launch anyway".
 [Unit]
 Description=Pavilion visual dongle kiosk browser
 After=systemd-user-sessions.service jester-agent.service plymouth-quit-wait.service
@@ -17,7 +19,7 @@ TTYVHangup=yes
 UtmpIdentifier=tty1
 UtmpMode=user
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/state && exit 0; sleep 1; done; exit 0'
-ExecStart=/usr/bin/cage -s -- /usr/bin/chromium-browser \
+ExecStart=/usr/bin/cage -s -- /usr/bin/chromium-browser --no-memcheck \
     --kiosk --ozone-platform=wayland --noerrdialogs --disable-infobars --no-first-run \
     --disable-session-crashed-bubble --disable-features=Translate,TranslateUI --disable-pinch \
     --overscroll-history-navigation=0 --check-for-update-interval=31536000 --password-store=basic \
