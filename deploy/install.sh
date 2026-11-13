@@ -16,6 +16,12 @@ BIN=${1:-bin/jester-agent-linux-arm64}
 echo "Installing packages…"
 apt-get update -qq
 apt-get install -y -qq network-manager dnsmasq-base cage wlr-randr curl fonts-dejavu-core
+# Turning the picture (portrait screens) takes Cage 0.1.5 or newer. Raspberry Pi OS has one; Debian's own is 0.1.4.
+CAGE=$(dpkg-query -W -f='${Version}' cage 2>/dev/null || true)
+if dpkg --compare-versions "${CAGE:-0}" lt 0.1.5; then
+	echo "Warning: Cage ${CAGE:-(unknown)} can't turn the picture, so screens set to portrait will show in landscape."
+	echo "         It takes Cage 0.1.5 or newer (Raspberry Pi's archive has one)."
+fi
 apt-get install -y -qq chromium-browser 2>/dev/null || apt-get install -y -qq chromium
 [ -x /usr/bin/chromium-browser ] || ln -sf /usr/bin/chromium /usr/bin/chromium-browser
 # The kiosk runs this, not the chromium-browser script (see jester-kiosk.service).

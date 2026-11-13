@@ -5,6 +5,8 @@ package device
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,10 +156,15 @@ func parseHealth(meminfo, pressure, loadavg, temp string) Health {
 	return h
 }
 
-// Rotator turns the picture with wlr-randr (Cage supports it). Env must reach Cage's Wayland socket.
+// Rotator turns the picture with wlr-randr. Env must reach Cage's Wayland socket. Cage forgets the turn whenever it
+// starts, so it's asked again for every new browser.
 type Rotator struct {
 	Env []string
 }
+
+// ErrOldCage: the kiosk's compositor doesn't let another program set up the TV's output, so the picture can't be
+// turned at all. Cage does from 0.1.5; Debian Bookworm's own package is 0.1.4 (Raspberry Pi's is newer).
+var ErrOldCage = errors.New("this Cage can't turn the picture: that takes Cage 0.1.5 or newer (Raspberry Pi's package, not Debian Bookworm's 0.1.4)")
 
 // Rotate sets landscape, portrait (turned right) or portrait_flipped (turned left).
 func (r Rotator) Rotate(ctx context.Context, orientation string) error {
@@ -173,7 +180,30 @@ func (r Rotator) Rotate(ctx context.Context, orientation string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "wlr-randr", "--output", output, "--transform", transform)
 	cmd.Env = append(os.Environ(), r.Env...)
-	return cmd.Run()
+	said, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	err = rotateError(err, string(said))
+	if errors.Is(err, ErrOldCage) {
+		if version, verr := exec.CommandContext(ctx, "cage", "-v").Output(); verr == nil {
+			err = fmt.Errorf("%w; installed: %s", err, strings.TrimSpace(string(version)))
+		}
+	}
+	return err
+}
+
+// rotateError is why wlr-randr failed, in its own words (said: what it printed): before Cage is up that's "failed
+// to connect to display"; against a Cage without wlr-output-management, ErrOldCage.
+func rotateError(err error, said string) error {
+	said = strings.TrimSpace(said)
+	switch {
+	case strings.Contains(said, "wlr-output-management"):
+		return ErrOldCage
+	case said != "":
+		return fmt.Errorf("wlr-randr: %s (%w)", said, err)
+	}
+	return fmt.Errorf("wlr-randr: %w", err)
 }
 
 // Run runs a command line (the reboot command), split on spaces.

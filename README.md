@@ -97,6 +97,11 @@ tty1 as `kiosk`). It also makes every DNS name on the setup Wi-Fi point at the d
 
 Logs: `journalctl -u jester-agent -u jester-kiosk -f`. State: `curl 127.0.0.1:8080/state` on the Pi.
 
+Cage starts in landscape every time, so the agent turns the picture to Pavilion's orientation (wlr-randr) for every
+kiosk that starts: after boot, after a crash, after it restarted a hung browser. That takes Cage 0.1.5 or newer
+(`cage -v`): Raspberry Pi OS has one, Debian Bookworm's own package is 0.1.4 and can't. `install.sh` warns about it
+and the agent's log says so (`[display] Couldn't turn the picture: …`).
+
 ### When a dongle is slow
 
 A Pi Zero 2 W has 416 MB for everything, and Chromium alone wants about that much for one page, so it lives on
