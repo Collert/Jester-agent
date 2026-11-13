@@ -1,6 +1,11 @@
 package device
 
-import "testing"
+import (
+	"errors"
+	"os/exec"
+	"strings"
+	"testing"
+)
 
 func TestFullAvg10(t *testing.T) {
 	text := "some avg10=41.20 avg60=30.02 avg300=12.50 total=123456\nfull avg10=27.85 avg60=19.01 avg300=8.00 total=98765\n"
@@ -22,5 +27,24 @@ func TestParseHealth(t *testing.T) {
 	}
 	if h := parseHealth("", "", "", ""); h != (Health{}) {
 		t.Errorf("nothing readable (a laptop) is nothing reported, got %+v", h)
+	}
+}
+
+func TestRotateError(t *testing.T) {
+	failed := &exec.ExitError{}
+	// What wlr-randr 0.3 prints against a compositor without wlr-output-management (Cage before 0.1.5).
+	if err := rotateError(failed, "compositor doesn't support wlr-output-management-unstable-v1\n"); !errors.Is(err, ErrOldCage) {
+		t.Errorf("a Cage that's too old: got %v", err)
+	}
+	// Before Cage is up (the agent starts first).
+	err := rotateError(failed, "failed to connect to display\n")
+	if errors.Is(err, ErrOldCage) || !strings.Contains(err.Error(), "failed to connect to display") {
+		t.Errorf("no Cage yet: got %v", err)
+	}
+	if !errors.Is(err, failed) {
+		t.Errorf("the command's own error is kept: %v", err)
+	}
+	if err := rotateError(exec.ErrNotFound, ""); !errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("no wlr-randr: got %v", err)
 	}
 }

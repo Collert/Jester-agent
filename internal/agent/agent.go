@@ -60,6 +60,7 @@ var (
 	OpenGrace        = time.Minute             // after sending the browser somewhere, how long the page may take to arrive
 	OpenRetry        = 2 * time.Second         // the browser couldn't be sent somewhere new (not up, or too busy): try again this soon
 	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
+	TurnSettle       = 5 * time.Second         // a browser still there this long after its picture was turned took the turn well
 	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
 )
 
@@ -122,6 +123,7 @@ type Agent struct {
 	browserCh chan struct{}
 	conn      *pavilion.Conn
 	connMu    sync.Mutex
+	turnMu    sync.Mutex // one wlr-randr at a time (turnPicture)
 }
 
 // New makes an agent; Run starts it.
@@ -455,10 +457,9 @@ func (a *Agent) screenPhase() Phase {
 func (a *Agent) runPaired(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cfg := a.Store.Config()
-	if a.Rotator != nil && cfg.Orientation != "" {
-		_ = a.Rotator.Rotate(ctx, cfg.Orientation)
-	}
+	// For an agent started again under a kiosk that's up. At boot the kiosk isn't up yet and this can't work:
+	// steerBrowser turns the picture once the browser answers.
+	_ = a.turnPicture(ctx)
 	st := a.Net.Status(ctx)
 	if st.Hotspot { // e.g. restarted while in rescue: try the saved Wi-Fi first
 		_ = a.Net.Reconnect(ctx)
@@ -571,9 +572,74 @@ func (a *Agent) unpair(ctx context.Context) {
 	_, _ = a.Store.Update(func(c *store.Config) {
 		c.Token, c.DongleID, c.Name, c.StoreName, c.Screen, c.PairCode = "", 0, "", "", nil, ""
 	})
-	if a.Rotator != nil {
-		_ = a.Rotator.Rotate(ctx, "landscape")
+	if err := a.turnPicture(ctx); err != nil { // not paired any more: back to landscape
+		a.logf("display", "Couldn't turn the picture back: %v", err)
 	}
+}
+
+// turnPicture turns the TV's picture the way Pavilion set it, or to landscape on a dongle that isn't paired (setup
+// is read that way). It reads what's stored itself, one caller at a time, so whichever call comes last leaves the
+// picture as stored.
+func (a *Agent) turnPicture(ctx context.Context) error {
+	if a.Rotator == nil {
+		return nil
+	}
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	cfg := a.Store.Config()
+	orientation := cfg.Orientation
+	if !cfg.Paired() {
+		orientation = "landscape"
+	}
+	if orientation == "" {
+		return nil
+	}
+	return a.Rotator.Rotate(ctx, orientation)
+}
+
+// pictureTurns is what steerBrowser remembers about turning the picture. Cage starts with the picture as the TV
+// is, whatever it was turned to before, so every browser that starts (a new browser.Target) has it turned again.
+type pictureTurns struct {
+	done    string    // the browser whose picture was last turned (or that was given up on)
+	tries   int       // failed tries with the browser that's up now
+	at      time.Time // when done's picture was turned, until that browser has been seen to live through it
+	stopped int       // browsers in a row that were gone right after their picture was turned
+}
+
+// turnFor turns the picture for the browser that just answered, if that hasn't been done for this one. It returns
+// when to look at the browser again to see that the turn didn't stop it (nil: no need).
+func (a *Agent) turnFor(ctx context.Context, p *pictureTurns, target string) <-chan time.Time {
+	if target == p.done {
+		if !p.at.IsZero() && time.Since(p.at) >= TurnSettle {
+			p.at, p.stopped = time.Time{}, 0
+		}
+		return nil
+	}
+	cfg := a.Store.Config()
+	if a.Rotator == nil || !cfg.Paired() || cfg.Orientation == "" {
+		return nil // nothing to turn it to: Cage starts in landscape, which is how setup is read
+	}
+	if !p.at.IsZero() { // the last browser was gone before it was seen to live through its turn
+		p.at = time.Time{}
+		p.stopped++
+	}
+	if p.stopped >= 2 {
+		// Twice in a row is no accident: turning the picture stops this kiosk, and doing it for every browser that
+		// starts would leave the TV with none. The next browser after this one is tried again.
+		a.logf("display", "The last two browsers stopped right after the picture was turned; leaving this one's as it is")
+		p.done, p.tries, p.stopped = target, 0, 0
+		return nil
+	}
+	err := a.turnPicture(ctx)
+	if err == nil {
+		p.done, p.tries, p.at = target, 0, time.Now()
+		return time.After(TurnSettle)
+	}
+	if p.tries++; p.tries >= 3 || errors.Is(err, device.ErrOldCage) {
+		a.logf("display", "Couldn't turn the picture: %v", err)
+		p.done, p.tries = target, 0
+	}
+	return nil
 }
 
 // ---------- Pavilion ----------
@@ -759,8 +825,8 @@ func (a *Agent) handle(ctx context.Context, m pavilion.Message, send func(pavili
 		if err != nil {
 			a.logf("store", "Couldn't save Pavilion's settings: %v", err)
 		}
-		if cfg.Orientation != before.Orientation && a.Rotator != nil {
-			if err := a.Rotator.Rotate(ctx, cfg.Orientation); err != nil {
+		if cfg.Orientation != before.Orientation {
+			if err := a.turnPicture(ctx); err != nil {
 				a.logf("display", "Couldn't turn the picture: %v", err)
 			}
 		}
@@ -876,6 +942,8 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 	starvedLogged := false
 	lastWant := ""                    // the screen the browser was last sent to (it lands on another address: the link signs in, then redirects)
 	described, describeTries := "", 0 // the browser (browser.Target) that was last asked what it is
+	var turns pictureTurns
+	var settle <-chan time.Time
 	open := func(want string) bool {
 		lastWant, sentAt = want, time.Now()
 		if err := a.Browser.Navigate(ctx, want); err != nil {
@@ -898,6 +966,8 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 		case <-a.browserCh:
 		case <-tick.C:
 		case <-retry:
+		case <-settle:
+			settle = nil
 		}
 		retry = nil
 		want := a.wantURL()
@@ -911,6 +981,13 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 			current, err = a.Browser.URL(ctx)
 		} else {
 			current, err = a.Browser.Probe(ctx)
+		}
+		if !errors.Is(err, browser.ErrNoCDP) {
+			// The browser answered (even if its page is too busy to), so Cage is up: the picture is turned before
+			// anything is opened, not after a screen has loaded sideways.
+			if again := a.turnFor(ctx, &turns, a.Browser.Target()); again != nil {
+				settle = again
+			}
 		}
 		if err != nil {
 			if errors.Is(err, browser.ErrNoCDP) && a.Browser.CDP == "" {
