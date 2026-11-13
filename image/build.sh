@@ -8,8 +8,8 @@
 # The image lands in image/pi-gen/deploy/. GitHub Actions runs this too (.github/workflows/image.yml).
 cd "$(dirname "$0")"
 
-# Raspberry Pi OS Bookworm, 64-bit, as released on this date. Moving to a newer one is changing this line.
-PIGEN_TAG=2026-10-06-raspios-bookworm-arm64
+# Raspberry Pi OS Trixie, 64-bit, as released on this date. Moving to a newer one is changing this line.
+PIGEN_TAG=2026-10-06-raspios-trixie-arm64
 BIN=../bin/jester-agent-linux-arm64
 
 [ -f "$BIN" ] || { echo "Build the agent first: make pi"; exit 1; }
@@ -22,6 +22,8 @@ git clone --quiet --depth 1 --branch "$PIGEN_TAG" https://github.com/RPi-Distro/
 cp -r stage-jester pi-gen/
 chmod +x pi-gen/stage-jester/prerun.sh pi-gen/stage-jester/*/*.sh # pi-gen skips scripts that aren't executable
 touch pi-gen/stage2/SKIP_IMAGES # stage2 would also save plain Raspberry Pi OS Lite ("-lite"): only ours is wanted
+# No cloud-init or netplan on a dongle (see config): ENABLE_CLOUD_INIT=0 alone still installs the packages.
+touch pi-gen/stage2/04-cloud-init/SKIP
 files=pi-gen/stage-jester/00-agent/files
 mkdir -p "$files/bin"
 cp "$BIN" "$files/bin/"

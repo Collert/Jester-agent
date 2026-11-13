@@ -1,7 +1,9 @@
-// Package browser keeps the TV's browser running and steers it. The agent starts the kiosk browser (by default Cage
-// running Chromium in kiosk mode) and restarts it whenever it exits or stops answering. It moves the browser between
-// the agent's own pages (http://127.0.0.1:8080: setup, "No screen assigned", errors) and the Pavilion screen it was
-// told to show through the Chrome DevTools Protocol on a local port.
+// Package browser keeps the TV's browser running and steers it between the agent's own pages (http://127.0.0.1:8080:
+// setup, "No screen assigned", errors) and the Pavilion screen it was told to show. There are two kinds of browser:
+//
+//   - cog (WPE WebKit), what a dongle runs: it has no DevTools port. The agent's page takes itself to the screen;
+//     the agent only ever calls the browser back to its page, with OpenCmd (cogctl), or by restarting it.
+//   - Chromium, steered through the Chrome DevTools Protocol on a local port (CDP).
 package browser
 
 import (
@@ -27,7 +29,10 @@ type Browser struct {
 	CDP     string   // host:port of the DevTools endpoint; "" when the browser can't be steered
 	// RestartCmd restarts a browser something else runs (e.g. "systemctl restart jester-kiosk"), when Command is "".
 	RestartCmd string
-	Logf       func(kind, format string, args ...any)
+	// OpenCmd opens an address in a browser without a DevTools port (e.g. "jester-cogctl open"; the address is added
+	// as its last argument), ReloadCmd reloads its page ("jester-cogctl reload").
+	OpenCmd, ReloadCmd string
+	Logf               func(kind, format string, args ...any)
 
 	mu       sync.Mutex
 	proc     *os.Process
@@ -248,8 +253,48 @@ func (b *Browser) Navigate(ctx context.Context, url string) error {
 	return err
 }
 
-// Reload reloads the page, or restarts the browser when it can't be steered.
+// ErrNoOpen: there's no way to send this browser anywhere (no DevTools port and no OpenCmd).
+var ErrNoOpen = errors.New("browser: no command to open a page with")
+
+// run runs one of the browser's commands (OpenCmd, ReloadCmd) with extra arguments, for at most CallTimeout.
+func (b *Browser) run(ctx context.Context, line string, args ...string) error {
+	f := strings.Fields(line)
+	if len(f) == 0 {
+		return ErrNoOpen
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f[0], append(f[1:], args...)...)
+	cmd.Env = append(os.Environ(), b.Env...)
+	if said, err := cmd.CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(said)); msg != "" {
+			return fmt.Errorf("%s: %w: %s", f[0], err, msg)
+		}
+		return fmt.Errorf("%s: %w", f[0], err)
+	}
+	return nil
+}
+
+// Open opens url in the browser: through the DevTools port when there is one, else with OpenCmd.
+func (b *Browser) Open(ctx context.Context, url string) error {
+	if b.CDP != "" {
+		return b.Navigate(ctx, url)
+	}
+	return b.run(ctx, b.OpenCmd, url)
+}
+
+// Reload reloads the page, or restarts the browser when it can't be told to.
 func (b *Browser) Reload(ctx context.Context) error {
+	if b.CDP == "" {
+		if err := b.run(ctx, b.ReloadCmd); err != nil {
+			if b.CanRestart() {
+				b.Restart()
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 	if _, err := b.call(ctx, "Page.reload", map[string]any{"ignoreCache": true}); err != nil {
 		if b.CanRestart() {
 			b.Restart()

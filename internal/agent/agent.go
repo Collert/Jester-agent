@@ -60,6 +60,7 @@ var (
 	OpenGrace        = time.Minute             // after sending the browser somewhere, how long the page may take to arrive
 	OpenRetry        = 2 * time.Second         // the browser couldn't be sent somewhere new (not up, or too busy): try again this soon
 	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
+	AwayGrace        = 3 * time.Second         // a browser off the dongle's page this long isn't reloading it: it's somewhere else
 	TurnSettle       = 5 * time.Second         // a browser still there this long after its picture was turned took the turn well
 	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
 )
@@ -98,10 +99,13 @@ type Options struct {
 	Rotator interface {
 		Rotate(context.Context, string) error
 	}
-	ShellURL string // the agent's own page in the kiosk browser, e.g. http://127.0.0.1:8080/
-	Version  string
-	Reboot   string // command line run for Pavilion's Restart ("" = restart the browser only)
-	Hardware string // short ID; "" reads it from the Pi
+	// KioskRotates: the kiosk turns the picture itself when it starts, asking the agent which way (Rotation), so a
+	// new orientation takes a restart of the kiosk (cog straight on the display). Rotator isn't used then.
+	KioskRotates bool
+	ShellURL     string // the agent's own page in the kiosk browser, e.g. http://127.0.0.1:8080/
+	Version      string
+	Reboot       string // command line run for Pavilion's Restart ("" = restart the browser only)
+	Hardware     string // short ID; "" reads it from the Pi
 	// Starved: the system is short of memory right now, so a browser that doesn't answer is waiting, not hung
 	// (device.MemoryStarved). nil: never.
 	Starved func() bool
@@ -117,6 +121,11 @@ type Agent struct {
 	subs  map[chan struct{}]struct{}
 
 	browserInfo *browser.Info // what the browser said about itself the last time it was asked
+	// The dongle's page in a browser without a DevTools port (steerByPage): the screen it was last told to take
+	// itself to, the one it had been told when the last page closed, and when a page last opened and last closed.
+	servedGo, heading  string
+	pageSeen, pageLeft time.Time
+	rotation           int // the turn the kiosk was last told to start with (Rotation); -1: it hasn't asked
 
 	setupCh   chan SetupRequest
 	rescueCh  chan string
@@ -137,6 +146,7 @@ func New(o Options) *Agent {
 	a := &Agent{Options: o, start: time.Now(), subs: map[chan struct{}]struct{}{},
 		setupCh: make(chan SetupRequest, 1), rescueCh: make(chan string, 1), browserCh: make(chan struct{}, 1)}
 	a.state = State{Phase: PhaseBoot, Since: time.Now()}
+	a.rotation = -1
 	if o.Browser.Logf == nil {
 		o.Browser.Logf = a.logf
 	}
@@ -190,15 +200,46 @@ func (a *Agent) setPhase(p Phase, detail string) {
 	a.update(func(s *State) { s.Phase, s.Detail = p, detail })
 }
 
+// Viewers is how many TV pages are open right now (each holds a Subscribe for its live updates). With the kiosk
+// browser that's 1 while it shows the dongle's page and 0 while it shows a screen, or isn't running. (Someone
+// looking at the TV page from a laptop counts too.)
+func (a *Agent) Viewers() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.subs)
+}
+
+// PageGo is GoURL for the TV page to act on (its data-go): the agent remembers what the page was told, which is
+// where the browser has gone when the page closes.
+func (a *Agent) PageGo() string {
+	url := a.GoURL()
+	a.mu.Lock()
+	a.servedGo = url
+	a.mu.Unlock()
+	return url
+}
+
+// page is how many TV pages are open, where the last one to close had been told to go ("" for nowhere, or when
+// none has been open yet), and when one last opened and the last one closed (zero: none has yet).
+func (a *Agent) page() (viewers int, heading string, seen, left time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.subs), a.heading, a.pageSeen, a.pageLeft
+}
+
 // Subscribe returns a channel nudged on every change (the TV page's live updates) and a function to stop.
 func (a *Agent) Subscribe() (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	a.mu.Lock()
 	a.subs[ch] = struct{}{}
+	a.pageSeen = time.Now()
 	a.mu.Unlock()
 	return ch, func() {
 		a.mu.Lock()
 		delete(a.subs, ch)
+		if len(a.subs) == 0 {
+			a.heading, a.pageLeft = a.servedGo, time.Now()
+		}
 		a.mu.Unlock()
 	}
 }
@@ -581,6 +622,21 @@ func (a *Agent) unpair(ctx context.Context) {
 // is read that way). It reads what's stored itself, one caller at a time, so whichever call comes last leaves the
 // picture as stored.
 func (a *Agent) turnPicture(ctx context.Context) error {
+	if a.KioskRotates {
+		// The kiosk turns the picture when it starts. One that started with another turn than the one wanted
+		// now is started again; one that hasn't started yet will ask.
+		a.mu.Lock()
+		running := a.rotation
+		a.mu.Unlock()
+		if want := a.wantRotation(); running >= 0 && running != want {
+			a.logf("display", "Turning the picture: starting the kiosk again")
+			a.mu.Lock()
+			a.rotation = -1 // until the new one asks: a second call mustn't restart it again
+			a.mu.Unlock()
+			a.Browser.Restart()
+		}
+		return nil
+	}
 	if a.Rotator == nil {
 		return nil
 	}
@@ -595,6 +651,26 @@ func (a *Agent) turnPicture(ctx context.Context) error {
 		return nil
 	}
 	return a.Rotator.Rotate(ctx, orientation)
+}
+
+// wantRotation is the stored orientation as quarter turns (0 to 3, the way cog counts them): landscape 0, portrait
+// 1, portrait_flipped 3; landscape on a dongle that isn't paired.
+func (a *Agent) wantRotation() int {
+	cfg := a.Store.Config()
+	if !cfg.Paired() {
+		return 0
+	}
+	return map[string]int{"portrait": 1, "portrait_flipped": 3}[cfg.Orientation]
+}
+
+// Rotation is asked by the kiosk each time it starts (KioskRotates): how many quarter turns to show the picture
+// with. The agent remembers the answer, so it knows when the kiosk has to start again for a new one.
+func (a *Agent) Rotation() int {
+	want := a.wantRotation()
+	a.mu.Lock()
+	a.rotation = want
+	a.mu.Unlock()
+	return want
 }
 
 // pictureTurns is what steerBrowser remembers about turning the picture. Cage starts with the picture as the TV
@@ -892,6 +968,23 @@ func (a *Agent) forceNavigate() {
 	}
 }
 
+// ScreenFailed notes that the screen couldn't be opened (the browser showed its error page, or the dongle's page
+// couldn't reach the screen's address before going there): the TV says so on the dongle's page, and the screen is
+// tried again after ScreenRetry.
+func (a *Agent) ScreenFailed() {
+	a.logf("browser", "The screen didn't load; showing the dongle's page and trying again shortly")
+	a.update(func(s *State) { s.ScreenFailed = time.Now() })
+	time.AfterFunc(ScreenRetry+time.Second, func() { a.update(func(*State) {}) }) // the TV page and the browser look again
+}
+
+// GoURL is the screen the browser should be on right now, or "" when it should be on the dongle's page.
+func (a *Agent) GoURL() string {
+	if want := a.wantURL(); want != a.ShellURL {
+		return want
+	}
+	return ""
+}
+
 // wantURL is where the browser should be: the screen while showing it, else the agent's page.
 func (a *Agent) wantURL() string {
 	st := a.State()
@@ -934,8 +1027,79 @@ func (a *Agent) describeBrowser(ctx context.Context) bool {
 	return true
 }
 
+// steerByPage steers a browser that has no DevTools port (cog). The dongle's page does the going: while the
+// browser shows it, it holds a connection to the agent open (Viewers), and it takes itself to the screen when the
+// agent's state says so (PageGo, the page's data-go). That leaves the agent one thing to do: call the browser back
+// to the dongle's page when that's where it should be and isn't (no screen any more, another screen, the dongle's
+// name to show, setup). It asks with Browser.Open, and starts the browser again when asking doesn't work or
+// brings nothing: a browser that starts, starts on the dongle's page.
+//
+// What it can't see is a screen that stopped working after it opened. A page that crashes is reloaded by cog
+// itself, and a cog that exits is started again by systemd, on the dongle's page, which sends it to the screen.
+func (a *Agent) steerByPage(ctx context.Context) {
+	tick := time.NewTicker(BrowserCheck)
+	defer tick.Stop()
+	started := time.Now()
+	a.Browser.Uptime()     // a browser the agent doesn't run counts as started when the agent did
+	var calledAt time.Time // when the browser was last called back
+	calls := 0             // calls since it was last on the dongle's page
+	var retry <-chan time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.browserCh:
+		case <-tick.C:
+		case <-retry:
+		}
+		retry = nil
+		want := a.wantURL()
+		viewers, heading, seen, left := a.page()
+		if seen.After(calledAt) {
+			calledAt, calls = time.Time{}, 0 // it came: whatever is wrong now is new
+		}
+		if viewers > 0 {
+			continue // on the dongle's page, which goes to the screen by itself
+		}
+		if want != a.ShellURL && want == heading {
+			continue // it left for the screen that's wanted
+		}
+		// It should be on the dongle's page (to stay, or to be sent on to another screen), and isn't.
+		if left.IsZero() {
+			left = started // not seen on it since the agent started
+		}
+		if away := time.Since(left); away < AwayGrace {
+			retry = time.After(AwayGrace - away) // perhaps only loading the page, or its connection is coming back
+			continue
+		}
+		if !calledAt.IsZero() && time.Since(calledAt) < OpenGrace {
+			continue // called a moment ago: the page takes a while to arrive
+		}
+		err := errors.New("it was called and didn't come")
+		if calls == 0 {
+			if err = a.Browser.Open(ctx, a.ShellURL); err == nil {
+				calls, calledAt = 1, time.Now()
+				continue
+			}
+		}
+		// It can't be called (not up yet on a dongle that's starting, or calling doesn't work here), or it was and
+		// nothing came. One that has had its time to start is started again: that brings it to the dongle's page too.
+		if a.Browser.CanRestart() && a.Browser.Uptime() > OpenGrace {
+			a.logf("browser", "The browser isn't on the dongle's page (%v); starting it again", err)
+			a.Browser.Restart()
+			calls, calledAt = 0, time.Now()
+		} else if !errors.Is(err, browser.ErrNoOpen) {
+			retry = time.After(OpenRetry)
+		}
+	}
+}
+
 // steerBrowser keeps the browser on wantURL and restarts it when it hangs.
 func (a *Agent) steerBrowser(ctx context.Context) {
+	if a.Browser.CDP == "" {
+		a.steerByPage(ctx)
+		return
+	}
 	tick := time.NewTicker(BrowserCheck)
 	defer tick.Stop()
 	var hungSince, sentAt time.Time
@@ -990,9 +1154,6 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 			}
 		}
 		if err != nil {
-			if errors.Is(err, browser.ErrNoCDP) && a.Browser.CDP == "" {
-				continue // not steerable: the agent's page navigates by itself
-			}
 			if a.Starved != nil && a.Starved() {
 				// Waiting for memory, not hung: a restart would only start the slow load over. The clock starts once
 				// the Pi has memory to spare again.
@@ -1016,9 +1177,7 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 		}
 		hungSince, starvedLogged = time.Time{}, false
 		if browser.IsErrorPage(current) && !a.onShell(current) {
-			a.logf("browser", "The screen didn't load; showing the dongle's page and trying again shortly")
-			a.update(func(s *State) { s.ScreenFailed = time.Now() })
-			time.AfterFunc(ScreenRetry+time.Second, a.forceNavigate)
+			a.ScreenFailed()
 			want = a.ShellURL
 		}
 		if want == lastWant && time.Since(sentAt) < OpenGrace && !browser.IsErrorPage(current) {

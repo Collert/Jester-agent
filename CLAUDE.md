@@ -7,9 +7,12 @@ map, PROTOCOL.md for the contract with Pavilion (its `devices` app; change both 
   skip2/go-qrcode. Keep `go 1.22` in go.mod working.
 - Pages are Go templates rendered on the server (`internal/ui/templates`), with small vanilla JS only for what HTML
   can't do (the TV page's live refresh, clock and spinners, the code boxes). No CSS animation that runs without
-  end on the TV: Chromium redraws the whole screen 60 times a second while one does, and a Pi Zero can't spare it.
+  end on the TV: the browser redraws the whole screen 60 times a second while one does, and a Pi Zero can't spare it.
   The designs are the `Dongle*` and `DonglePortal*` artboards in the "Pavilion POS Register" canvas; treat them as
   a visual spec.
+- The kiosk browser is cog (WPE WebKit, Raspberry Pi OS Trixie's), not Chromium: there's no DevTools port. The TV
+  page takes itself to the screen and the agent calls the browser back (`steerByPage`, `deploy/jester-cogctl`).
+  What the pages use has to work in WebKit 2.48. The DevTools path (`-cdp`) is still there for a Chromium.
 - All state that must survive a restart goes through `internal/store` (SQLite). The agent's run-time state
   (`agent.State`) is in memory and rebuilt on start.
 - Everything that touches the system goes through an interface with a fake (`netmgr.Fake`), so the whole flow runs

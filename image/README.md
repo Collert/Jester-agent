@@ -1,6 +1,6 @@
 # The SD card image
 
-A ready-to-flash SD card for a dongle: Raspberry Pi OS Lite (Bookworm, 64-bit) with the agent and the kiosk already
+A ready-to-flash SD card for a dongle: Raspberry Pi OS Lite (Trixie, 64-bit) with the agent and the kiosk already
 installed. Flash it, put the card in a Pi behind a TV, power it on, and the TV says *Scan to start*. Nobody has to
 log in or run `install.sh`.
 
@@ -11,9 +11,9 @@ runs [deploy/install.sh](../deploy/install.sh) inside the image as if it were a 
 | File | Does |
 | --- | --- |
 | `config` | pi-gen's settings: hostname `jester`, user `jester`, SSH on, Wi-Fi country, time zone |
-| `stage-jester/00-agent` | installs the agent, Chromium, Cage and the systemd units (`deploy/install.sh`) |
+| `stage-jester/00-agent` | installs the agent, the browser (cog) and the systemd units (`deploy/install.sh`) |
 | `stage-jester/01-display` | drives HDMI even when the TV is off at boot; keeps boot text off the TV |
-| `build.sh` | fetches pi-gen (a fixed Bookworm release), puts the stage and the agent in it, builds in Docker |
+| `build.sh` | fetches pi-gen (a fixed Trixie release), puts the stage and the agent in it, builds in Docker |
 | `imager-list.sh` | writes the list that makes Raspberry Pi Imager offer the image with its settings |
 
 ## Getting an image
@@ -64,9 +64,16 @@ In `config`. SSH is on with the `jester` user and `JESTER_PASSWORD`: every card 
 password, so use a long one, or set `JESTER_SSH_KEY` and add `PUBKEY_ONLY_SSH=1` to `config` for keys only. The Wi-Fi
 country (`WPA_COUNTRY`) must be right for where the dongle is used; Imager's Wi-Fi settings change it per card.
 
-The OS version is the `PIGEN_TAG` line in `build.sh` (pi-gen's tags are named after Raspberry Pi OS releases).
-Moving to Trixie (Raspberry Pi OS 13) needs more than that line: Imager customises Trixie with cloud-init rather than
-`firstrun.sh` (`init_format` in `imager-list.sh`), and the Wi-Fi Imager saves turns up differently.
+The OS version is the `PIGEN_TAG` line in `build.sh` (pi-gen's tags are named after Raspberry Pi OS releases). It's
+Trixie (Raspberry Pi OS 13) for its browser: Trixie's cog comes with WebKit 2.48, Bookworm's with 2.38, from early
+2023.
+
+Raspberry Pi's own Trixie images take Imager's settings through cloud-init. This one is built without cloud-init
+(`ENABLE_CLOUD_INIT=0` in `config`, and its stage skipped in `build.sh`) and keeps Bookworm's way, a `firstrun.sh`
+(`"init_format": "systemd"` in `imager-list.sh`), which Trixie still has the helper for
+(`/usr/lib/raspberrypi-sys-mods/imager_custom`, the same file as on Bookworm). That way a Wi-Fi saved in Imager is one
+NetworkManager connection, which the agent takes over for the setup page; saved through cloud-init it would be
+written again by netplan on every boot, and fight the setup Wi-Fi for the radio.
 
 ## Not there yet
 

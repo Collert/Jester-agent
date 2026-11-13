@@ -1,0 +1,43 @@
+#!/bin/sh
+# The TV's browser: cog (WPE WebKit) drawing straight onto the display (DRM/KMS), with no window system under it.
+# jester-kiosk.service runs this as the kiosk user on tty1 and starts it again whenever it exits.
+#
+# cog always starts on the agent's page (http://127.0.0.1:8080/), which takes itself to the screen Pavilion picked.
+# The agent calls it back to that page with jester-cogctl, over the D-Bus session started here.
+#
+# Settings come from /etc/default/jester-kiosk (JESTER_KIOSK_MODE, JESTER_KIOSK_MODE_MAX, JESTER_COG_FLAGS).
+set -u
+
+: "${XDG_RUNTIME_DIR:=/tmp/jester-kiosk-$(id -u)}"
+export XDG_RUNTIME_DIR
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+
+# A D-Bus session of the kiosk's own, where jester-cogctl knows to find it. It goes when the service stops.
+bus="$XDG_RUNTIME_DIR/jester-kiosk-bus"
+rm -f "$bus"
+dbus-daemon --session --nofork --nopidfile --address="unix:path=$bus" &
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$bus" ] && break; sleep 0.2; done
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$bus"
+
+# Which way up: the agent knows (Pavilion's setting). Turning takes cog's OpenGL renderer; unturned, pages go to
+# the display as they are, which is the cheaper way.
+rotation=$(curl -fsS -m 5 http://127.0.0.1:8080/kiosk/rotation 2>/dev/null || echo 0)
+case "$rotation" in
+1 | 2 | 3) params="renderer=gles,rotation=$rotation" ;;
+*) params="renderer=modeset" ;;
+esac
+
+# The TV's own preferred mode, but nothing above 1080p: more pixels than that only costs.
+export COG_PLATFORM_DRM_MODE_MAX="${JESTER_KIOSK_MODE_MAX:-1920x1080}"
+if [ -n "${JESTER_KIOSK_MODE:-}" ]; then
+	export COG_PLATFORM_DRM_VIDEO_MODE="$JESTER_KIOSK_MODE"
+fi
+
+# --webprocess-failure=restart: a page that crashes is loaded again. --bg-color: the dongle's own dark green rather
+# than a white flash between pages. Sound plays without anyone tapping the TV first.
+# shellcheck disable=SC2086 # JESTER_COG_FLAGS is several words
+exec cog --platform="${JESTER_KIOSK_PLATFORM:-drm}" --platform-params="$params" \
+	--webprocess-failure=restart --bg-color="#14261F" \
+	--media-playback-requires-user-gesture=false \
+	${JESTER_COG_FLAGS:-} \
+	http://127.0.0.1:8080/

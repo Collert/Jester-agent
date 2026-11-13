@@ -48,9 +48,11 @@ func main() {
 		browserCmd  = flag.String("browser", os.Getenv("JESTER_BROWSER"), "the kiosk browser's command line, started and kept running by the agent (\"\" if something else runs it)")
 		browserRst  = flag.String("browser-restart", os.Getenv("JESTER_BROWSER_RESTART"), "restarts a browser something else runs, when it hangs (e.g. \"systemctl restart jester-kiosk\")")
 		wayland     = flag.String("wayland-runtime", env("XDG_RUNTIME_DIR", "/run/jester"), "the XDG_RUNTIME_DIR holding Cage's Wayland socket (for turning the picture)")
-		cdp         = flag.String("cdp", env("JESTER_CDP", "127.0.0.1:9222"), "the browser's DevTools address, for steering it (\"\" if it can't be steered)")
+		browserOpen = flag.String("browser-open", os.Getenv("JESTER_BROWSER_OPEN"), "opens an address in a browser without a DevTools port; the address is added (e.g. \"jester-cogctl open\")")
+		browserRld  = flag.String("browser-reload", os.Getenv("JESTER_BROWSER_RELOAD"), "reloads that browser's page (e.g. \"jester-cogctl reload\")")
+		cdp         = flag.String("cdp", os.Getenv("JESTER_CDP"), "a Chromium's DevTools address, to steer it through (e.g. 127.0.0.1:9222); \"\" for cog, where the TV page takes itself to the screen")
 		rebootCmd   = flag.String("reboot", env("JESTER_REBOOT", "systemctl reboot"), "what Pavilion's Restart runs (\"\" restarts the browser only)")
-		rotate      = flag.Bool("rotate", os.Getenv("JESTER_ROTATE") != "0", "turn the picture with wlr-randr when Pavilion says portrait")
+		rotate      = flag.Bool("rotate", os.Getenv("JESTER_ROTATE") != "0", "turn the picture when Pavilion says portrait (cog: by starting it again turned; Chromium in Cage: with wlr-randr)")
 		hardwareID  = flag.String("id", os.Getenv("JESTER_ID"), "the dongle's short ID (default: from the Pi's serial number)")
 		devPortal   = flag.Bool("dev-portal", os.Getenv("JESTER_DEV_PORTAL") == "1", "also serve the setup page at /portal/ on the TV's address (for trying it on a laptop)")
 		showVersion = flag.Bool("version", false, "print the version and exit")
@@ -93,7 +95,8 @@ func main() {
 		_ = os.MkdirAll(runtimeDir, 0o700)
 	}
 	browserEnv := []string{"XDG_RUNTIME_DIR=" + runtimeDir}
-	br := &browser.Browser{Command: strings.Fields(*browserCmd), Env: browserEnv, CDP: *cdp, RestartCmd: *browserRst}
+	br := &browser.Browser{Command: strings.Fields(*browserCmd), Env: browserEnv, CDP: *cdp, RestartCmd: *browserRst,
+		OpenCmd: *browserOpen, ReloadCmd: *browserRld}
 
 	shell := "http://" + *listen + "/"
 	if host, port, err := net.SplitHostPort(*listen); err == nil && (host == "" || host == "0.0.0.0") {
@@ -103,7 +106,9 @@ func main() {
 	if !*fake {
 		opts.Starved = device.MemoryStarved
 	}
-	if *rotate && !*fake {
+	if *cdp == "" {
+		opts.KioskRotates = *rotate // cog on the display: it asks which way up when it starts (/kiosk/rotation)
+	} else if *rotate && !*fake {
 		opts.Rotator = device.Rotator{Env: append(browserEnv, "WAYLAND_DISPLAY="+env("WAYLAND_DISPLAY", "wayland-0"))}
 	}
 	if *fake && *rebootCmd == "systemctl reboot" {

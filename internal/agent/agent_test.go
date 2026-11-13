@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/collert/jester-agent/internal/browser"
 	"github.com/collert/jester-agent/internal/device"
 	"github.com/collert/jester-agent/internal/netmgr"
+	"github.com/collert/jester-agent/internal/pavilion"
 	"github.com/collert/jester-agent/internal/store"
 )
 
@@ -728,5 +730,212 @@ func TestPortalPagesDontNudgeTheTV(t *testing.T) {
 	case <-a.browserCh:
 		t.Error("the browser check was nudged though nothing changed")
 	default:
+	}
+}
+
+// ---------- a browser without a DevTools port (cog): the dongle's page goes, the agent calls back ----------
+
+// pageLed is a paired dongle told to show a screen, with a browser that has no DevTools port. Two small scripts
+// stand in for cogctl and for restarting the kiosk; opened and restarted say what they were asked.
+func pageLed(t *testing.T, openWorks bool, rotates bool) (a *Agent, opened func() []string, restarted func() int) {
+	t.Helper()
+	dir := t.TempDir()
+	lines := func(name string) []string {
+		raw, _ := os.ReadFile(filepath.Join(dir, name))
+		return strings.Fields(string(raw))
+	}
+	exit := "exit 0"
+	if !openWorks {
+		exit = "echo no cog here >&2; exit 1"
+	}
+	script := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	open := script("open", `echo "$1" >> `+filepath.Join(dir, "opened")+"\n"+exit)
+	restart := script("restart", `echo again >> `+filepath.Join(dir, "restarted"))
+
+	st, _ := store.Open(filepath.Join(dir, "agent.db"))
+	t.Cleanup(func() { st.Close() })
+	_, _ = st.Update(func(c *store.Config) {
+		c.PavilionURL, c.Token, c.WifiSSID, c.Orientation = "http://127.0.0.1:1", "7.s3cret", "Juniper-Staff", "landscape"
+		c.Screen = &store.Screen{Name: "Order board", URL: "https://pavilion.test/devices/dongles/open/abc"}
+	})
+	fake := netmgr.NewFake()
+	fake.Delay = time.Millisecond
+	fake.Remember("Juniper-Staff")
+	a = New(Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST",
+		KioskRotates: rotates, Browser: &browser.Browser{OpenCmd: open, RestartCmd: restart}})
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-stopped }) // before the test's timings are put back (cleanups run last first)
+	go func() { a.Run(ctx); close(stopped) }()
+	waitFor(t, "showing", func() bool { return a.State().Phase == PhaseShowing })
+	return a, func() []string { return lines("opened") }, func() int { return len(lines("restarted")) }
+}
+
+// pageTimings sets the timings of steering by the page for one test. Call it before pageLed.
+func pageTimings(t *testing.T, check, away, grace time.Duration) {
+	t.Helper()
+	oldCheck, oldAway, oldGrace, oldRetry := BrowserCheck, AwayGrace, OpenGrace, OpenRetry
+	BrowserCheck, AwayGrace, OpenGrace, OpenRetry = check, away, grace, check
+	t.Cleanup(func() { BrowserCheck, AwayGrace, OpenGrace, OpenRetry = oldCheck, oldAway, oldGrace, oldRetry })
+}
+
+// config is Pavilion saying what to show now.
+func config(a *Agent, screen *pavilion.Screen, orientation string) {
+	_ = a.handle(context.Background(), pavilion.Message{Type: "config", Name: "Window TV", Store: "Juniper Lane",
+		Screen: screen, Orientation: orientation}, func(pavilion.Message) error { return nil })
+}
+
+func TestPageGoesToTheScreenAndTheAgentCallsItBack(t *testing.T) {
+	pageTimings(t, 20*time.Millisecond, 20*time.Millisecond, time.Hour)
+	a, opened, restarted := pageLed(t, true, false)
+	const screen = "https://pavilion.test/devices/dongles/open/abc"
+
+	// The browser on the dongle's page: it's told where to go, and goes.
+	_, leave := a.Subscribe()
+	if a.PageGo() != screen {
+		t.Fatalf("the page should be sent to the screen, got %q", a.PageGo())
+	}
+	if a.Viewers() != 1 {
+		t.Fatal("one TV page open")
+	}
+	leave()
+	time.Sleep(200 * time.Millisecond) // ten checks
+	if len(opened()) != 0 || restarted() != 0 {
+		t.Fatalf("a browser that left for the screen it was sent to is left alone: opened %q, restarted %d", opened(), restarted())
+	}
+
+	// No screen any more: the browser is called back to the dongle's page, once.
+	config(a, nil, "landscape")
+	waitFor(t, "the call back", func() bool { return len(opened()) == 1 })
+	if opened()[0] != "http://127.0.0.1:8080/" {
+		t.Errorf("called back to %q", opened()[0])
+	}
+	_, leave = a.Subscribe() // it came
+	if a.PageGo() != "" {
+		t.Error("nowhere to go without a screen")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if len(opened()) != 1 || restarted() != 0 {
+		t.Errorf("called once: opened %q, restarted %d", opened(), restarted())
+	}
+
+	// A screen again: the page goes by itself. Then another one: back through the dongle's page.
+	config(a, &pavilion.Screen{Name: "Order board", URL: screen}, "landscape")
+	if a.PageGo() != screen {
+		t.Fatal("the page should be sent to the screen")
+	}
+	leave()
+	time.Sleep(100 * time.Millisecond)
+	if len(opened()) != 1 {
+		t.Fatalf("it went to the screen: nothing to call, opened %q", opened())
+	}
+	const other = "https://pavilion.test/devices/dongles/open/xyz"
+	config(a, &pavilion.Screen{Name: "Menu", URL: other}, "landscape")
+	waitFor(t, "the call back for another screen", func() bool { return len(opened()) == 2 })
+	_, leave = a.Subscribe()
+	if a.PageGo() != other {
+		t.Errorf("then on to the new screen, got %q", a.PageGo())
+	}
+	leave()
+	time.Sleep(200 * time.Millisecond)
+	if len(opened()) != 2 || restarted() != 0 {
+		t.Errorf("on the new screen: opened %q, restarted %d", opened(), restarted())
+	}
+}
+
+// When calling the browser doesn't work (cogctl can't reach it), it's started again instead, which brings it to
+// the dongle's page too. But not a browser that's only just starting.
+func TestBrowserThatCantBeCalledIsStartedAgain(t *testing.T) {
+	pageTimings(t, 20*time.Millisecond, 20*time.Millisecond, 400*time.Millisecond)
+	a, opened, restarted := pageLed(t, false, false)
+	time.Sleep(150 * time.Millisecond)
+	if restarted() != 0 {
+		t.Fatalf("a dongle that just started gives its browser time to come up, restarted %d times", restarted())
+	}
+	if len(opened()) == 0 {
+		t.Fatal("it should have been called")
+	}
+	waitFor(t, "a restart", func() bool { return restarted() == 1 })
+	_, leave := a.Subscribe() // the new browser, on the dongle's page
+	defer leave()
+	time.Sleep(600 * time.Millisecond)
+	if restarted() != 1 {
+		t.Errorf("once it's on the dongle's page it's left alone, restarted %d times", restarted())
+	}
+}
+
+// A browser that was called and didn't come within OpenGrace is hung: started again.
+func TestBrowserThatDoesntComeIsStartedAgain(t *testing.T) {
+	pageTimings(t, 20*time.Millisecond, 20*time.Millisecond, 300*time.Millisecond)
+	_, opened, restarted := pageLed(t, true, false)
+	waitFor(t, "the call", func() bool { return len(opened()) == 1 })
+	time.Sleep(100 * time.Millisecond)
+	if restarted() != 0 || len(opened()) != 1 {
+		t.Fatalf("called once, then given time: opened %q, restarted %d", opened(), restarted())
+	}
+	waitFor(t, "a restart", func() bool { return restarted() >= 1 })
+}
+
+// cog takes its turn when it starts, asking the agent which. A new orientation from Pavilion starts it again, once;
+// the same one doesn't, and neither does anything before the kiosk has asked at all.
+func TestKioskIsStartedAgainToTurnThePicture(t *testing.T) {
+	pageTimings(t, time.Hour, time.Hour, time.Hour) // no calling back in this test
+	a, _, restarted := pageLed(t, true, true)
+	screen := &pavilion.Screen{Name: "Order board", URL: "https://pavilion.test/devices/dongles/open/abc"}
+
+	config(a, screen, "portrait")
+	time.Sleep(100 * time.Millisecond)
+	if restarted() != 0 {
+		t.Fatal("a kiosk that hasn't started yet will ask which way up: nothing to start again")
+	}
+	if a.Rotation() != 1 {
+		t.Errorf("portrait is one quarter turn, got %d", a.Rotation())
+	}
+	config(a, screen, "portrait")
+	time.Sleep(100 * time.Millisecond)
+	if restarted() != 0 {
+		t.Fatal("the same orientation again changes nothing")
+	}
+	config(a, screen, "portrait_flipped")
+	waitFor(t, "the kiosk started again", func() bool { return restarted() == 1 })
+	config(a, screen, "landscape") // before the new kiosk has asked: it will get this one
+	time.Sleep(100 * time.Millisecond)
+	if restarted() != 1 {
+		t.Errorf("one restart is enough for a kiosk that hasn't asked yet, got %d", restarted())
+	}
+	if a.Rotation() != 0 {
+		t.Errorf("landscape is no turn, got %d", a.Rotation())
+	}
+}
+
+// The page found that the screen's address doesn't answer: the TV stays on the dongle's page, saying so, and the
+// screen is tried again after ScreenRetry.
+func TestScreenThatDoesntAnswerIsTriedAgain(t *testing.T) {
+	pageTimings(t, time.Hour, time.Hour, time.Hour)
+	oldRetry := ScreenRetry
+	ScreenRetry = 150 * time.Millisecond
+	t.Cleanup(func() { ScreenRetry = oldRetry })
+	a, _, _ := pageLed(t, true, false)
+	changes, stop := a.Subscribe()
+	defer stop()
+	if a.PageGo() == "" {
+		t.Fatal("the page should be sent to the screen")
+	}
+	a.ScreenFailed()
+	<-changes
+	if a.PageGo() != "" {
+		t.Fatal("after a failure the page stays where it is")
+	}
+	waitFor(t, "another try", func() bool { return a.GoURL() != "" })
+	select {
+	case <-changes: // the TV page is told to look again
+	case <-time.After(3 * time.Second):
+		t.Error("the TV page wasn't told that it's time to try again")
 	}
 }

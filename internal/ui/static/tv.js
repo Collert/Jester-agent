@@ -1,5 +1,5 @@
 // The TV page (templates/tv.html): swaps in a fresh copy whenever the agent's state changes (SSE from /events),
-// ticks the clock, and, when the agent can't steer the browser, takes itself to the screen it should show.
+// ticks the clock, and, in a browser the agent can't steer (cog), takes itself to the screen it should show.
 const app = document.getElementById("app");
 let busy = false, again = false;
 let shown = null; // the HTML last swapped in: app.innerHTML never reads back exactly as the server sent it
@@ -20,9 +20,28 @@ async function refresh() {
     if (again) { again = false; refresh(); }
 }
 
-function follow() {
-    const go = app.querySelector("[data-go]")?.dataset.go;
-    if (go) location.replace(go);
+// Going to the screen (data-go, set while the browser should be on it). First the page makes sure the screen's
+// server answers at all: a browser that can't open a page shows its own error page and stays on it, where the agent
+// can't see it. When nothing answers the agent is told instead, and the TV says so and tries again shortly.
+const wanted = () => app.querySelector("[data-go]")?.dataset.go;
+let going = null;
+async function follow() {
+    const go = wanted();
+    if (!go || go === going) return;
+    going = go;
+    const giveUp = new AbortController();
+    const timer = setTimeout(() => giveUp.abort(), 20000);
+    try {
+        await fetch(new URL(go).origin + "/", { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit", signal: giveUp.signal });
+    } catch {
+        going = null;
+        fetch("/screen-failed", { method: "POST" }).catch(() => {});
+        return;
+    } finally {
+        clearTimeout(timer);
+    }
+    if (wanted() === go) location.replace(go);
+    else { going = null; follow(); } // changed while checking
 }
 
 function tick() {

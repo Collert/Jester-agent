@@ -1,8 +1,13 @@
-# Extra flags for the kiosk's Chromium, added after the ones in jester-kiosk.service. For trying things on a dongle
-# that's slow, without building anything. After a change:
+# Settings for the kiosk's browser (cog, started by /usr/local/bin/jester-kiosk). After a change:
 #
 #   sudo systemctl restart jester-kiosk
-#   curl -s 127.0.0.1:8080/state       # "system": what the Pi has left; "browser": how the pages are drawn
-#
-# For example, --disable-gpu has the processor draw everything (to compare with the graphics chip, the default).
-JESTER_CHROMIUM_FLAGS=
+#   curl -s 127.0.0.1:8080/state       # "system": what the Pi has left
+
+# The TV's picture. Empty: the TV's own preferred mode, at most JESTER_KIOSK_MODE_MAX (1920x1080 when empty).
+# A smaller picture is less to draw: 1280x720 is under half the pixels of 1080p.
+JESTER_KIOSK_MODE=
+JESTER_KIOSK_MODE_MAX=
+
+# Extra flags for cog ("cog --help-all" lists them), e.g. --web-mem-limit=250 to have the page's process start
+# afresh when it grows past 250 MB.
+JESTER_COG_FLAGS=

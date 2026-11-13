@@ -1,0 +1,9 @@
+#!/bin/sh
+# cogctl for the kiosk's cog, for the agent (which runs as root): "jester-cogctl open <address>", "jester-cogctl
+# reload". cog listens on the D-Bus session deploy/jester-kiosk starts for the kiosk user, so the command is run as
+# that user, at that session's address.
+set -eu
+uid=$(id -u kiosk)
+bus=/run/user/$uid/jester-kiosk-bus
+[ -S "$bus" ] || bus=/tmp/jester-kiosk-$uid/jester-kiosk-bus # where the launcher puts it without a login session
+exec runuser -u kiosk -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" cogctl "$@"

@@ -1,17 +1,12 @@
-# The TV: Cage (a one-window Wayland compositor) running Chromium in kiosk mode on tty1, opening the agent's page.
-# systemd starts it again whenever it exits; the agent restarts it when it stops answering.
-# Chromium itself (/usr/lib/chromium/chromium), not the /usr/bin/chromium script: that one adds what Raspberry Pi's
-# desktop wants (accessibility for every page, extensions) and a "less than 1GB of RAM" dialog nobody can click
-# away. The one thing of the script's that's kept is --use-angle=gles: it's how Raspberry Pi's Chromium gets to the
-# graphics chip, and without it the processor may be drawing every frame. Without DISPLAY nothing asks Cage for an X
-# server.
-# --enable-low-end-device-mode through --disk-cache-size keep it in a Pi Zero 2 W's 416 MB: low-RAM mode (as on cheap
-# Android phones), one page process that's reused instead of a fresh one per site, the GPU work in the browser's own
-# process (every Chromium process costs 25 MB or more before it does anything), no back-forward cache (which keeps
-# the page you left alive), no spare process started in advance, no on-device AI models, and no background downloads
-# (updates, sync, crash reports) competing with the screen.
-# JESTER_CHROMIUM_FLAGS (/etc/default/jester-kiosk) adds flags after these, for trying things on a dongle that's slow:
-# "curl 127.0.0.1:8080/state" says what the Pi has left ("system") and how the browser draws ("browser").
+# The TV: cog (the WPE WebKit browser) on tty1, drawing straight onto the display, opening the agent's page. The
+# launcher is deploy/jester-kiosk; its settings are in /etc/default/jester-kiosk.
+#
+# cog and not Chromium: on a Pi Zero 2 W (416 MB for everything) Chromium wanted about as much as there is for one
+# page, and the dongle lived in swap. cog took about half as much in the same test, and nothing runs under it (no
+# window system: it draws onto the display itself).
+#
+# systemd starts it again whenever it exits, always on the agent's page, which takes itself to the screen Pavilion
+# picked. The agent calls it back to that page (jester-cogctl) and restarts this unit when that doesn't work.
 [Unit]
 Description=Pavilion visual dongle kiosk browser
 After=systemd-user-sessions.service jester-agent.service plymouth-quit-wait.service
@@ -25,26 +20,16 @@ User=kiosk
 PAMName=login
 TTYPath=/dev/tty1
 StandardInput=tty
+# What cog prints goes to the journal, not onto the TV's console.
+StandardOutput=journal
+StandardError=journal
 TTYReset=yes
 TTYVHangup=yes
 UtmpIdentifier=tty1
 UtmpMode=user
-Environment=JESTER_CHROMIUM_FLAGS=
 EnvironmentFile=-/etc/default/jester-kiosk
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/state && exit 0; sleep 1; done; exit 0'
-ExecStart=/usr/bin/cage -s -- /usr/bin/env -u DISPLAY /usr/lib/chromium/chromium \
-    --kiosk --ozone-platform=wayland --use-angle=gles --noerrdialogs --disable-infobars --no-first-run \
-    --disable-session-crashed-bubble --disable-pinch \
-    --enable-low-end-device-mode --renderer-process-limit=1 --disable-site-isolation-trials --in-process-gpu \
-    --disable-features=Translate,TranslateUI,BackForwardCache,SpareRendererForSitePerProcess,MediaRouter,OptimizationHints,OptimizationHintsFetching,OptimizationGuideModelDownloading,OptimizationTargetPrediction \
-    --disable-background-networking --disable-component-update --disable-sync --disable-breakpad \
-    --disable-extensions --disable-renderer-accessibility --disk-cache-size=33554432 \
-    --overscroll-history-navigation=0 --check-for-update-interval=31536000 --password-store=basic \
-    --autoplay-policy=no-user-gesture-required \
-    --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
-    --user-data-dir=/home/kiosk/.config/jester-chromium \
-    $JESTER_CHROMIUM_FLAGS \
-    http://127.0.0.1:8080/
+ExecStart=/usr/local/bin/jester-kiosk
 Restart=always
 RestartSec=2
 

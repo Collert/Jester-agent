@@ -221,3 +221,97 @@ func TestTVPageHasNoEndlessAnimation(t *testing.T) {
 		t.Errorf("the idle page sits still: %s", body)
 	}
 }
+
+// showing is a paired dongle told to show a screen, with the kind of browser that has no DevTools port (cog).
+func showing(t *testing.T) (*Server, *agent.Agent, *store.Store) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	_, _ = st.Update(func(c *store.Config) {
+		c.PavilionURL, c.Token, c.WifiSSID, c.Name = "http://127.0.0.1:1", "7.s3cret", "Juniper-Staff", "Window TV"
+		c.Screen = &store.Screen{Name: "Order board", URL: "https://pavilion.test/devices/dongles/open/abc"}
+	})
+	fake := netmgr.NewFake()
+	fake.Delay = time.Millisecond
+	fake.Remember("Juniper-Staff")
+	a := agent.New(agent.Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST", KioskRotates: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-stopped })
+	go func() { a.Run(ctx); close(stopped) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for a.State().Phase != agent.PhaseShowing && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	s := New(a)
+	s.NoCDP = true
+	return s, a, st
+}
+
+func get(h http.Handler, method, target string, header ...string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, target, nil)
+	for i := 0; i+1 < len(header); i += 2 {
+		r.Header.Set(header[i], header[i+1])
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+// In cog the TV page takes itself to the screen: the page carries where (data-go) while that's where the browser
+// should be. When the page reports that the screen's address doesn't answer, it stays and says so.
+func TestTVPageCarriesTheScreenToGoTo(t *testing.T) {
+	s, a, _ := showing(t)
+	h := s.TVHandler()
+
+	body := get(h, "GET", "/?partial=1").Body.String()
+	if !strings.Contains(body, `data-go="https://pavilion.test/devices/dongles/open/abc"`) || !strings.Contains(body, "Opening Order board") {
+		t.Fatalf("the page should be sent to the screen: %s", body)
+	}
+	if w := get(h, "GET", "/screen-failed"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("only the page's POST counts, got %d", w.Code)
+	}
+	if w := get(h, "POST", "/screen-failed"); w.Code != http.StatusNoContent {
+		t.Fatalf("POST /screen-failed: %d", w.Code)
+	}
+	if a.State().ScreenFailed.IsZero() {
+		t.Fatal("the failure wasn't noted")
+	}
+	body = get(h, "GET", "/?partial=1").Body.String()
+	if strings.Contains(body, "data-go") || !strings.Contains(body, "Can’t open Order board") {
+		t.Errorf("after a failure the page stays and says so: %s", body)
+	}
+}
+
+func TestKioskAsksWhichWayUp(t *testing.T) {
+	s, _, st := showing(t)
+	h := s.TVHandler()
+	if got := strings.TrimSpace(get(h, "GET", "/kiosk/rotation").Body.String()); got != "0" {
+		t.Errorf("landscape: %q", got)
+	}
+	_, _ = st.Update(func(c *store.Config) { c.Orientation = "portrait_flipped" })
+	if got := strings.TrimSpace(get(h, "GET", "/kiosk/rotation").Body.String()); got != "3" {
+		t.Errorf("portrait, turned left, is three quarter turns: %q", got)
+	}
+}
+
+// The browser keeps the page's script and styles but checks them each time, so a kiosk doesn't run an old agent's
+// script after an update.
+func TestStaticFilesAreCheckedEachTime(t *testing.T) {
+	s, _, _ := setup(t)
+	h := s.TVHandler()
+	w := get(h, "GET", "/static/tv.js")
+	tag := w.Header().Get("ETag")
+	if w.Code != http.StatusOK || tag == "" || w.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("tv.js: %d, ETag %q, Cache-Control %q", w.Code, tag, w.Header().Get("Cache-Control"))
+	}
+	if w := get(h, "GET", "/static/tv.js", "If-None-Match", tag); w.Code != http.StatusNotModified {
+		t.Errorf("an unchanged file isn't sent again, got %d", w.Code)
+	}
+	if other := get(h, "GET", "/static/tv.css").Header().Get("ETag"); other == tag || other == "" {
+		t.Errorf("each file has its own tag: %q", other)
+	}
+}

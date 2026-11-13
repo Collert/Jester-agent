@@ -1,6 +1,6 @@
 // Package netmgr drives the dongle's network: the setup Wi-Fi (a hotspot the phone joins), scanning, joining the
 // restaurant's Wi-Fi and reading what it's connected to. NM talks to NetworkManager through nmcli (Raspberry Pi OS
-// Bookworm uses it by default); Fake pretends, for running the agent on a laptop.
+// uses it by default); Fake pretends, for running the agent on a laptop.
 package netmgr
 
 import (

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Sets up a Raspberry Pi (Raspberry Pi OS Bookworm Lite, 64-bit) as a Pavilion visual dongle.
+# Sets up a Raspberry Pi (Raspberry Pi OS Trixie Lite, 64-bit) as a Pavilion visual dongle.
 # Run as root from a checkout, after building the agent:  GOOS=linux GOARCH=arm64 make  (or copy bin/jester-agent).
 # The SD card image (image/) runs it too, in a chroot while building: there everything is set up to start at boot,
 # but nothing is running to start or stop now.
@@ -15,36 +15,41 @@ BIN=${1:-bin/jester-agent-linux-arm64}
 
 echo "Installing packages…"
 apt-get update -qq
-apt-get install -y -qq network-manager dnsmasq-base cage wlr-randr curl fonts-dejavu-core
-# Turning the picture (portrait screens) takes Cage 0.1.5 or newer. Raspberry Pi OS has one; Debian's own is 0.1.4.
-CAGE=$(dpkg-query -W -f='${Version}' cage 2>/dev/null || true)
-if dpkg --compare-versions "${CAGE:-0}" lt 0.1.5; then
-	echo "Warning: Cage ${CAGE:-(unknown)} can't turn the picture, so screens set to portrait will show in landscape."
-	echo "         It takes Cage 0.1.5 or newer (Raspberry Pi's archive has one)."
-fi
-apt-get install -y -qq chromium-browser 2>/dev/null || apt-get install -y -qq chromium
-[ -x /usr/bin/chromium-browser ] || ln -sf /usr/bin/chromium /usr/bin/chromium-browser
-# The kiosk runs this, not the chromium-browser script (see jester-kiosk.service).
-[ -x /usr/lib/chromium/chromium ] || { echo "No /usr/lib/chromium/chromium: fix ExecStart in jester-kiosk.service"; exit 1; }
+apt-get install -y -qq network-manager dnsmasq-base curl fonts-dejavu-core
+# The kiosk's browser: cog (WPE WebKit), which draws straight onto the display. dbus-daemon is for the D-Bus session
+# the agent calls it over; the GStreamer packages are what WebKit plays a screen's sound with.
+apt-get install -y -qq cog dbus-daemon gstreamer1.0-plugins-good gstreamer1.0-alsa gstreamer1.0-libav
+[ -x /usr/bin/cog ] && [ -x /usr/bin/cogctl ] || { echo "No cog: the kiosk can't run"; exit 1; }
 
 echo "Kiosk user…"
 id kiosk >/dev/null 2>&1 || useradd -m -G video,render,input,audio -s /usr/sbin/nologin kiosk
-usermod -aG audio kiosk # screens play sound (music, order callouts) through the TV
-KIOSK_UID=$(id -u kiosk)
+# The display and input devices for cog, and sound: screens play music and order callouts through the TV.
+usermod -aG video,render,input,audio kiosk
 
 echo "Memory…"
-# A Pi Zero 2 W leaves Linux about 416 MB and Chromium wants more. Swapping to the SD card stalls everything for
-# seconds at a time (and wears the card out): swap to compressed memory (zram) instead.
-apt-get install -y -qq zram-tools
-cat > /etc/default/zramswap <<EOF
+# A Pi Zero 2 W leaves Linux about 416 MB. Swapping to the SD card stalls everything for seconds at a time (and wears
+# the card out): what doesn't fit is swapped to compressed memory (zram) instead, and never to the card.
+ZRAM=
+if dpkg-query -W -f='${Status}' rpi-swap 2>/dev/null | grep -q "install ok installed"; then
+	# Raspberry Pi OS Trixie: rpi-swap sets zram up, by default with a file on the card behind it. Without the file.
+	install -d /etc/rpi/swap.conf.d
+	cat > /etc/rpi/swap.conf.d/90-jester.conf <<EOF
+[Main]
+Mechanism=zram
+EOF
+else
+	apt-get install -y -qq zram-tools
+	cat > /etc/default/zramswap <<EOF
 PERCENT=60
 PRIORITY=100
 EOF
+	apt-get purge -y -qq dphys-swapfile 2>/dev/null || true
+	ZRAM=zramswap.service
+fi
 cat > /etc/sysctl.d/90-jester-zram.conf <<EOF
 vm.swappiness=100
 vm.page-cluster=0
 EOF
-apt-get purge -y -qq dphys-swapfile 2>/dev/null || true
 # Services a dongle has no use for (cellular modems, Bluetooth, mounting USB disks, batteries, hotkeys): each is
 # memory the browser needs. Masked, since some start whenever another program asks for them.
 for s in ModemManager bluetooth hciuart udisks2 upower triggerhappy; do
@@ -67,20 +72,18 @@ install -m 0755 "$BIN" /usr/local/bin/jester-agent
 install -d -m 0700 /var/lib/jester
 install -d /etc/NetworkManager/dnsmasq-shared.d
 install -m 0644 deploy/captive-dnsmasq.conf /etc/NetworkManager/dnsmasq-shared.d/jester-captive.conf
-sed "s/@KIOSK_UID@/$KIOSK_UID/" deploy/jester-agent.service > /etc/systemd/system/jester-agent.service
+install -m 0644 deploy/jester-agent.service /etc/systemd/system/jester-agent.service
 install -m 0644 deploy/jester-kiosk.service /etc/systemd/system/jester-kiosk.service
-# Extra Chromium flags for this dongle (see the file), kept when the agent is installed again.
+install -m 0755 deploy/jester-kiosk deploy/jester-cogctl /usr/local/bin/
+# The kiosk's settings for this dongle (see the file), kept when the agent is installed again.
 [ -f /etc/default/jester-kiosk ] || install -m 0644 deploy/jester-kiosk.default /etc/default/jester-kiosk
-# The kiosk only shows Pavilion's screens, and nobody can answer a permission prompt on it (local network, location,
-# camera, …): Chromium's policies allow them all without asking.
-install -d /etc/chromium/policies/managed
-install -m 0644 deploy/chromium-policy.json /etc/chromium/policies/managed/jester.json
 
-# Wi-Fi must be allowed (Bookworm keeps it blocked until a country is set): set yours with raspi-config.
+# Wi-Fi must be allowed (Raspberry Pi OS keeps it blocked until a country is set): set yours with raspi-config.
 rfkill unblock wifi || true
 
 [ -z "$NOW" ] || systemctl daemon-reload
 systemctl disable $NOW getty@tty1.service 2>/dev/null || true
-systemctl enable $NOW NetworkManager.service zramswap.service jester-agent.service jester-kiosk.service
+# shellcheck disable=SC2086 # ZRAM is empty or one unit
+systemctl enable $NOW NetworkManager.service $ZRAM jester-agent.service jester-kiosk.service
 systemctl set-default graphical.target
 echo "Done. The TV should show “Scan to start”."

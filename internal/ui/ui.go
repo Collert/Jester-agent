@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -33,7 +34,7 @@ var staticFS embed.FS
 // Server serves both sets of pages.
 type Server struct {
 	Agent *agent.Agent
-	NoCDP bool // the browser can't be steered: the TV page takes itself to the screen
+	NoCDP bool // the browser has no DevTools port (cog): the TV page takes itself to the screen
 	// DevPortal also serves the setup page on the TV's listener at /portal/ (for trying it on a laptop).
 	DevPortal bool
 
@@ -51,11 +52,26 @@ func New(a *agent.Agent) *Server {
 	return s
 }
 
+// static serves the pages' styles, scripts and fonts. A browser keeps its copy but asks each time whether it's
+// still the one (no-cache, and an ETag made from the file): a kiosk whose agent was just updated must not go on
+// running the old page's script for an hour.
 func static() http.Handler {
 	sub, _ := fs.Sub(staticFS, "static")
 	files := http.FileServer(http.FS(sub))
+	etags := map[string]string{}
+	_ = fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if raw, err := fs.ReadFile(sub, path); err == nil {
+				etags[path] = fmt.Sprintf(`"%x"`, sha256.Sum256(raw))[:18] + `"`
+			}
+		}
+		return nil
+	})
 	return http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "no-cache")
+		if tag := etags[r.URL.Path]; tag != "" {
+			w.Header().Set("ETag", tag) // http.FileServer answers If-None-Match with 304 from this
+		}
 		files.ServeHTTP(w, r)
 	}))
 }
@@ -68,6 +84,20 @@ func (s *Server) TVHandler() http.Handler {
 	mux.Handle("/static/", static())
 	mux.HandleFunc("/events", s.events)
 	mux.HandleFunc("/state", s.stateJSON)
+	// The TV page, about to take itself to the screen, found that the screen's address doesn't answer.
+	mux.HandleFunc("/screen-failed", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST", http.StatusMethodNotAllowed)
+			return
+		}
+		s.Agent.ScreenFailed()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// The kiosk, each time it starts: how many quarter turns to show the picture with (deploy/jester-kiosk).
+	mux.HandleFunc("/kiosk/rotation", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		fmt.Fprintln(w, s.Agent.Rotation())
+	})
 	if s.DevPortal {
 		mux.Handle("/portal/", http.StripPrefix("/portal", s.portalMux("/portal")))
 	}
@@ -125,6 +155,8 @@ func (s *Server) stateJSON(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds": int(s.Agent.Uptime().Seconds()),
 		// Why a dongle is slow: what the Pi has left, and whether the graphics chip draws the browser's pages.
 		"system": device.ReadHealth(), "browser": s.Agent.BrowserInfo(),
+		// Whether the kiosk browser is showing the dongle's page right now (else a screen, or it isn't running).
+		"on_dongle_page": s.Agent.Viewers() > 0,
 		"config": map[string]any{"pavilion": cfg.PavilionURL, "paired": cfg.Paired(), "dongle_id": cfg.DongleID,
 			"name": cfg.Name, "store": cfg.StoreName, "wifi": cfg.WifiSSID, "wired": cfg.Wired, "screen": cfg.Screen,
 			"orientation": cfg.Orientation, "paired_at": cfg.PairedAt},

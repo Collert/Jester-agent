@@ -2,7 +2,11 @@
 # and SSH key from the environment, so they stay out of git. Raspberry Pi Imager's settings change most of these per
 # card when it writes the image.
 IMG_NAME=jester
-RELEASE=bookworm
+RELEASE=trixie
+# No cloud-init (build.sh leaves its stage out too): Raspberry Pi Imager's settings arrive as a firstrun.sh, the way
+# they do on Bookworm ("init_format": "systemd" in imager-list.sh), which Trixie still takes. A Wi-Fi saved that way
+# is one NetworkManager connection the agent can pick up; cloud-init's would come back from netplan on every boot.
+ENABLE_CLOUD_INIT=0
 STAGE_LIST="stage0 stage1 stage2 stage-jester"
 DEPLOY_COMPRESSION=xz
 

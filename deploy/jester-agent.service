@@ -11,14 +11,13 @@ StartLimitIntervalSec=0
 Type=simple
 ExecStart=/usr/local/bin/jester-agent
 Environment=JESTER_DB=/var/lib/jester/agent.db
-# The kiosk browser runs as its own unit (it needs a login seat, and Chromium doesn't run as root); the agent steers
-# it through its DevTools port and restarts that unit when it hangs.
-Environment=JESTER_CDP=127.0.0.1:9222
-# Quoted: unquoted, systemd splits it at the spaces and the command would be just "systemctl".
+# The kiosk browser (cog) runs as its own unit: it needs a login seat, and doesn't run as root. Its page goes to the
+# screen by itself; the agent calls it back to its page and reloads it with jester-cogctl, and restarts the unit
+# when that doesn't work, or to turn the picture.
+# Quoted: unquoted, systemd splits it at the spaces and the command would be just the first word.
+Environment="JESTER_BROWSER_OPEN=/usr/local/bin/jester-cogctl open"
+Environment="JESTER_BROWSER_RELOAD=/usr/local/bin/jester-cogctl reload"
 Environment="JESTER_BROWSER_RESTART=systemctl restart jester-kiosk.service"
-# Where Cage's Wayland socket is (the kiosk user's runtime dir), for turning the picture with wlr-randr.
-# install.sh fills in the kiosk user's id.
-Environment=XDG_RUNTIME_DIR=/run/user/@KIOSK_UID@
 Restart=always
 RestartSec=2
 

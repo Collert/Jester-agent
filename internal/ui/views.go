@@ -157,8 +157,6 @@ func (s *Server) tvView() tvView {
 				v.Spinner = false
 				v.Title = "Can’t open " + cfg.Screen.Name
 				v.Text = "Pavilion didn’t answer. Trying again in a moment."
-			} else if s.NoCDP && !st.IdentifyUntil.After(time.Now()) {
-				v.Go = cfg.Screen.URL
 			}
 		}
 		ip := st.Net.IP
@@ -171,6 +169,9 @@ func (s *Server) tvView() tvView {
 
 	if st.IdentifyUntil.After(time.Now()) {
 		v.Identify, v.IdentifyName, v.IdentifySub = true, name, storeName+" · Dongle "+a.Hardware
+	}
+	if s.NoCDP {
+		v.Go = a.PageGo() // "" unless the browser should be on the screen right now
 	}
 	// Drop empty footer items (no IP yet, …).
 	keep := v.Foot[:0]

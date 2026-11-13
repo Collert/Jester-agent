@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -104,5 +107,56 @@ func TestDescribe(t *testing.T) {
 	b = &Browser{CDP: strings.TrimPrefix(server.URL, "http://")}
 	if info, err := b.Describe(context.Background()); err != nil || info.Accelerated() {
 		t.Errorf("drawn by the processor: %+v, %v", info, err)
+	}
+}
+
+// A browser without a DevTools port (cog) is opened and reloaded with commands.
+func TestOpenAndReloadByCommand(t *testing.T) {
+	dir := t.TempDir()
+	said := filepath.Join(dir, "said")
+	script := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	ctl := script("ctl", `echo "$@" >> `+said)
+	b := &Browser{OpenCmd: ctl + " open", ReloadCmd: ctl + " reload"}
+	if err := b.Open(context.Background(), "http://127.0.0.1:8080/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(said)
+	if string(raw) != "open http://127.0.0.1:8080/\nreload\n" {
+		t.Errorf("the commands got %q", raw)
+	}
+
+	// What the command says when it fails is the error.
+	broken := &Browser{OpenCmd: script("broken", "echo no such bus >&2; exit 3")}
+	if err := broken.Open(context.Background(), "http://x/"); err == nil || !strings.Contains(err.Error(), "no such bus") {
+		t.Errorf("a failing command: %v", err)
+	}
+	if err := (&Browser{}).Open(context.Background(), "http://x/"); err != ErrNoOpen {
+		t.Errorf("no way to open: %v", err)
+	}
+
+	// A page that can't be reloaded has its browser restarted instead.
+	restarted := filepath.Join(dir, "restarted")
+	b = &Browser{ReloadCmd: script("noreload", "exit 1"), RestartCmd: script("restart", "echo again >> "+restarted)}
+	if err := b.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(restarted); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(restarted); err != nil || b.Restarts() != 1 {
+		t.Errorf("the browser should have been restarted (%v, %d restarts)", err, b.Restarts())
 	}
 }
