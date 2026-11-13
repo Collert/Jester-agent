@@ -33,11 +33,33 @@ if [ -n "${JESTER_KIOSK_MODE:-}" ]; then
 	export COG_PLATFORM_DRM_VIDEO_MODE="$JESTER_KIOSK_MODE"
 fi
 
-# --webprocess-failure=restart: a page that crashes is loaded again. --bg-color: the dongle's own dark green rather
-# than a white flash between pages. Sound plays without anyone tapping the TV first.
+# --webprocess-failure=exit: when a page's process dies, cog stops and systemd starts it again on the agent's page,
+# which goes back to the screen. (Left to itself cog reloads the page a few times and then sits on an error page
+# for good, where the agent can't see it.) --bg-color: the dongle's own dark green rather than a white flash between
+# pages. Sound plays without anyone tapping the TV first.
+#
+# What cog says goes to the journal and, for the lines below, to a small file that starts empty each time.
+said="$XDG_RUNTIME_DIR/jester-kiosk.log"
 # shellcheck disable=SC2086 # JESTER_COG_FLAGS is several words
-exec cog --platform="${JESTER_KIOSK_PLATFORM:-drm}" --platform-params="$params" \
-	--webprocess-failure=restart --bg-color="#14261F" \
-	--media-playback-requires-user-gesture=false \
-	${JESTER_COG_FLAGS:-} \
-	http://127.0.0.1:8080/
+{
+	cog --platform="${JESTER_KIOSK_PLATFORM:-drm}" --platform-params="$params" \
+		--webprocess-failure=exit --bg-color="#14261F" \
+		--media-playback-requires-user-gesture=false \
+		${JESTER_COG_FLAGS:-} \
+		http://127.0.0.1:8080/
+	echo $? > "$XDG_RUNTIME_DIR/jester-kiosk.exit"
+} 2>&1 | tee "$said"
+code=$(cat "$XDG_RUNTIME_DIR/jester-kiosk.exit" 2>/dev/null || echo 1)
+
+# A browser that stopped by itself leaves the TV on the text console, and a dongle that shows nothing can't be asked
+# what's wrong (its setup Wi-Fi's password is on the TV too). So the reason is written there, until cog is up again.
+console="${JESTER_KIOSK_CONSOLE:-/dev/tty1}"
+if [ "$code" != 0 ] && [ -w "$console" ]; then
+	{
+		printf '\n\nPavilion dongle: the browser stopped (cog, exit %s) and is being started again.\n' "$code"
+		printf 'If this keeps coming back, the last thing it said is why:\n\n'
+		grep -v '^[[:space:]]*$' "$said" | tail -n 6 | cut -c1-200
+		printf '\nAll of it: journalctl -u jester-kiosk\n'
+	} > "$console" 2>/dev/null
+fi
+exit "$code"

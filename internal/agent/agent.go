@@ -1034,8 +1034,8 @@ func (a *Agent) describeBrowser(ctx context.Context) bool {
 // name to show, setup). It asks with Browser.Open, and starts the browser again when asking doesn't work or
 // brings nothing: a browser that starts, starts on the dongle's page.
 //
-// What it can't see is a screen that stopped working after it opened. A page that crashes is reloaded by cog
-// itself, and a cog that exits is started again by systemd, on the dongle's page, which sends it to the screen.
+// What it can't see is a screen that stopped working after it opened. When a page's process dies cog exits, and a
+// cog that exits is started again by systemd, on the dongle's page, which sends it to the screen.
 func (a *Agent) steerByPage(ctx context.Context) {
 	tick := time.NewTicker(BrowserCheck)
 	defer tick.Stop()

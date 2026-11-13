@@ -16,10 +16,13 @@ BIN=${1:-bin/jester-agent-linux-arm64}
 echo "Installing packages…"
 apt-get update -qq
 apt-get install -y -qq network-manager dnsmasq-base curl fonts-dejavu-core
-# The kiosk's browser: cog (WPE WebKit), which draws straight onto the display. dbus-daemon is for the D-Bus session
-# the agent calls it over; the GStreamer packages are what WebKit plays a screen's sound with.
-apt-get install -y -qq cog dbus-daemon gstreamer1.0-plugins-good gstreamer1.0-alsa gstreamer1.0-libav
+# The kiosk's browser: cog (WPE WebKit), which draws straight onto the display. libgles2 is OpenGL ES, which cog and
+# WebKit load when they start drawing: no package of theirs asks for it, and without it every page's process dies
+# at once and the TV stays on the boot console. dbus-daemon is for the D-Bus session the agent calls cog over; the
+# GStreamer packages are what WebKit plays a screen's sound with.
+apt-get install -y -qq cog libgles2 dbus-daemon gstreamer1.0-plugins-good gstreamer1.0-alsa gstreamer1.0-libav
 [ -x /usr/bin/cog ] && [ -x /usr/bin/cogctl ] || { echo "No cog: the kiosk can't run"; exit 1; }
+ldconfig -p | grep -q 'libGLESv2\.so\.2' || { echo "No libGLESv2.so.2 (libgles2): cog can't draw"; exit 1; }
 
 echo "Kiosk user…"
 id kiosk >/dev/null 2>&1 || useradd -m -G video,render,input,audio -s /usr/sbin/nologin kiosk

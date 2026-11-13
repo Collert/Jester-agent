@@ -19,9 +19,9 @@ menu board":
 
 And afterwards, by itself:
 
-- **The browser crashes**: a page that crashes is loaded again (cog), and a browser that exits is started again
+- **The browser crashes**: when a page's process dies cog stops, and a browser that stops is started again
   (systemd) on the agent's page, which sends it back to the screen. The agent restarts one that doesn't come when
-  called.
+  called. A browser that keeps stopping writes why on the TV's text console, which is what the TV shows then.
 - **The screen's address doesn't answer** (Pavilion down when the TV turns on): the TV stays on the agent's page,
   saying so, and tries again every 30 seconds. Once a screen is up it keeps itself current and rides out Pavilion
   restarts on its own.
@@ -107,10 +107,10 @@ scp -r bin deploy pi@dongle.local:jester/
 ssh pi@dongle.local 'cd jester && sudo deploy/install.sh bin/jester-agent-linux-arm64'
 ```
 
-`install.sh` installs NetworkManager and cog, makes a `kiosk` user, and installs two systemd units: `jester-agent`
-(root: it drives nmcli, serves port 80 and can reboot) and `jester-kiosk` (cog on tty1 as `kiosk`, started by
-`deploy/jester-kiosk`). It also makes every DNS name on the setup Wi-Fi point at the dongle
-(`deploy/captive-dnsmasq.conf`), which is what makes phones pop the setup page open.
+`install.sh` installs NetworkManager, cog and OpenGL ES (`libgles2`, which cog needs and doesn't ask for), makes a
+`kiosk` user, and installs two systemd units: `jester-agent` (root: it drives nmcli, serves port 80 and can reboot)
+and `jester-kiosk` (cog on tty1 as `kiosk`, started by `deploy/jester-kiosk`). It also makes every DNS name on the
+setup Wi-Fi point at the dongle (`deploy/captive-dnsmasq.conf`), which is what makes phones pop the setup page open.
 
 Trixie, for its browser: its cog (0.18) comes with WebKit 2.48. Bookworm's (cog 0.16, WebKit 2.38, from early 2023
 and not updated since) runs the same way with the same launcher, but screens and other web pages written for
