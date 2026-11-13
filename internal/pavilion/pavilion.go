@@ -271,5 +271,7 @@ func (c *Conn) Ping(ctx context.Context) error {
 	return c.ws.Ping(ctx)
 }
 
-// Close closes it.
-func (c *Conn) Close() { _ = c.ws.Close(websocket.StatusNormalClosure, "") }
+// Close closes it at once, without the WebSocket's goodbye: that waits seconds for the other end to answer, and
+// when a connection is closed here it's usually because the other end has stopped answering (and a new one is
+// wanted now).
+func (c *Conn) Close() { _ = c.ws.CloseNow() }

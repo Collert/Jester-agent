@@ -242,6 +242,7 @@ type fakeCDP struct {
 	href      string
 	navigates []string
 	hung      bool
+	down      bool // the browser isn't up (yet): nothing answers
 	navDelay  time.Duration
 	landOn    string
 }
@@ -251,6 +252,10 @@ func (f *fakeCDP) handler(t *testing.T) http.Handler {
 	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.down {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
 		_ = json.NewEncoder(w).Encode([]map[string]string{{"type": "page", "url": f.href, "webSocketDebuggerUrl": "ws://" + r.Host + "/page"}})
 	})
 	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
@@ -394,6 +399,122 @@ func TestNewScreenOpensWhileThePageIsBusy(t *testing.T) {
 	defer cdp.mu.Unlock()
 	if len(cdp.navigates) != 1 {
 		t.Errorf("opened once, not on every check: %q", cdp.navigates)
+	}
+}
+
+// A screen picked in Pavilion while the browser can't be reached (still starting, or too busy to answer in time) is
+// opened as soon as the browser answers, not at the next routine check a quarter of a minute later.
+func TestNewScreenOpensAsSoonAsTheBrowserAnswers(t *testing.T) {
+	browserTimings(t, time.Hour, BrowserHungAfter, 50*time.Millisecond) // no routine check during the test
+	oldRetry := OpenRetry
+	OpenRetry = 20 * time.Millisecond
+	t.Cleanup(func() { OpenRetry = oldRetry })
+	cdp := &fakeCDP{href: "http://127.0.0.1:8080/", down: true}
+	server := httptest.NewServer(cdp.handler(t))
+	t.Cleanup(server.Close)
+	pairedWithScreen(t, strings.TrimPrefix(server.URL, "http://"), "")
+
+	time.Sleep(100 * time.Millisecond)
+	cdp.mu.Lock()
+	if len(cdp.navigates) != 0 {
+		t.Fatalf("nothing can be opened while the browser is down: %q", cdp.navigates)
+	}
+	cdp.down = false
+	cdp.mu.Unlock()
+	waitFor(t, "the screen opened", func() bool { cdp.mu.Lock(); defer cdp.mu.Unlock(); return len(cdp.navigates) > 0 })
+	time.Sleep(150 * time.Millisecond)
+	cdp.mu.Lock()
+	defer cdp.mu.Unlock()
+	if len(cdp.navigates) != 1 || cdp.navigates[0] != "https://pavilion.test/devices/dongles/open/abc" {
+		t.Errorf("opened once: %q", cdp.navigates)
+	}
+}
+
+// A connection to Pavilion that died without a word (the Wi-Fi dropped for a moment) is noticed and replaced:
+// otherwise the dongle looks connected while nothing Pavilion sends (a new screen, a command) reaches it.
+func TestDeadConnectionToPavilionIsReplaced(t *testing.T) {
+	oldEvery, oldTimeout := PingEvery, PingTimeout
+	NetCheckEvery, PingEvery, PingTimeout = 50*time.Millisecond, 30*time.Millisecond, 60*time.Millisecond
+	var mu sync.Mutex
+	connections := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.CloseNow()
+		mu.Lock()
+		connections++
+		n := connections
+		mu.Unlock()
+		_ = ws.Write(r.Context(), websocket.MessageText, []byte(`{"type":"config","name":"Window TV","store":"Juniper Lane"}`))
+		if n == 1 {
+			<-r.Context().Done() // the first connection goes dead: open, but nothing reads it or answers its pings
+			return
+		}
+		for { // the next one is alive (reading answers pings)
+			if _, _, err := ws.Read(r.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	st, _ := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	_, _ = st.Update(func(c *store.Config) { c.PavilionURL, c.Token, c.WifiSSID = server.URL, "7.s3cret", "Juniper-Staff" })
+	fake := netmgr.NewFake()
+	fake.Delay = time.Millisecond
+	fake.Remember("Juniper-Staff")
+	a := New(Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST"})
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { a.Run(ctx); close(stopped) }()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+		server.CloseClientConnections()
+		server.Close()
+		st.Close()
+		PingEvery, PingTimeout = oldEvery, oldTimeout
+	})
+
+	waitFor(t, "a second connection", func() bool { mu.Lock(); defer mu.Unlock(); return connections >= 2 })
+	waitFor(t, "connected again", func() bool { return a.State().PavilionOnline })
+	time.Sleep(300 * time.Millisecond) // ten pings
+	mu.Lock()
+	defer mu.Unlock()
+	if connections != 2 {
+		t.Errorf("a connection that answers is kept, but there were %d", connections)
+	}
+}
+
+// The signal's number changes with every network check; the TV only shows it as a word. Only a change the TV shows
+// has the TV page and the browser check look again.
+func TestSignalWobbleDoesntNudgeTheTV(t *testing.T) {
+	a := New(Options{Store: nil, Net: netmgr.NewFake(), ShellURL: "http://127.0.0.1:8080/", Hardware: "TEST"})
+	changes, stop := a.Subscribe()
+	defer stop()
+	nudged := func() bool {
+		select {
+		case <-changes:
+			<-a.browserCh
+			return true
+		default:
+			return false
+		}
+	}
+	a.noteNet(netmgr.Status{WifiConnected: true, SSID: "Juniper-Staff", Signal: 82, IP: "192.168.1.42"})
+	if !nudged() {
+		t.Fatal("joining a network is something the TV shows")
+	}
+	a.noteNet(netmgr.Status{WifiConnected: true, SSID: "Juniper-Staff", Signal: 77, IP: "192.168.1.42"})
+	if nudged() {
+		t.Error("the TV was nudged for a signal that's still Strong")
+	}
+	if a.State().Net.Signal != 77 {
+		t.Error("the new signal is kept all the same (Pavilion gets the number)")
+	}
+	a.noteNet(netmgr.Status{WifiConnected: true, SSID: "Juniper-Staff", Signal: 45, IP: "192.168.1.42"})
+	if !nudged() {
+		t.Error("Strong to Fair is something the TV shows")
 	}
 }
 

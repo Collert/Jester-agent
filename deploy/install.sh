@@ -46,6 +46,16 @@ for s in ModemManager bluetooth hciuart udisks2 upower triggerhappy; do
 	systemctl mask "$s.service" 2>/dev/null || true
 done
 
+echo "Wi-Fi…"
+# The Pi's Wi-Fi chip dozes between packets to save power, so what Pavilion sends (a screen just picked, a command)
+# can wait or get lost on the way in. A dongle is always plugged in: keep the radio awake. This is the file
+# raspi-config's own "Wi-Fi power saving: off" writes.
+install -d /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/jester-wifi-powersave-off.conf <<EOF
+[connection]
+wifi.powersave = 2
+EOF
+
 echo "Agent…"
 install -m 0755 "$BIN" /usr/local/bin/jester-agent
 install -d -m 0700 /var/lib/jester
@@ -53,6 +63,8 @@ install -d /etc/NetworkManager/dnsmasq-shared.d
 install -m 0644 deploy/captive-dnsmasq.conf /etc/NetworkManager/dnsmasq-shared.d/jester-captive.conf
 sed "s/@KIOSK_UID@/$KIOSK_UID/" deploy/jester-agent.service > /etc/systemd/system/jester-agent.service
 install -m 0644 deploy/jester-kiosk.service /etc/systemd/system/jester-kiosk.service
+# Extra Chromium flags for this dongle (see the file), kept when the agent is installed again.
+[ -f /etc/default/jester-kiosk ] || install -m 0644 deploy/jester-kiosk.default /etc/default/jester-kiosk
 # The kiosk only shows Pavilion's screens, and nobody can answer a permission prompt on it (local network, location,
 # camera, …): Chromium's policies allow them all without asking.
 install -d /etc/chromium/policies/managed

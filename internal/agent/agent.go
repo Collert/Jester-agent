@@ -52,10 +52,13 @@ var (
 	PortalIdleAfter  = 3 * time.Minute  // a phone that hasn't loaded the setup page in this long has gone away
 	DoneFor          = 4 * time.Second  // how long "Paired with …" stays up
 	StatusEvery      = 30 * time.Second // heartbeat to Pavilion
+	PingEvery        = 15 * time.Second // how often the connection to Pavilion is checked for still being there
+	PingTimeout      = 10 * time.Second // no answer to that check this long: the connection is gone, open a new one
 	NetCheckEvery    = 10 * time.Second
 	BrowserCheck     = 15 * time.Second
 	BrowserHungAfter = 2 * time.Minute         // no answer from the browser this long (not counting time the Pi is short of memory): restart it
 	OpenGrace        = time.Minute             // after sending the browser somewhere, how long the page may take to arrive
+	OpenRetry        = 2 * time.Second         // the browser couldn't be sent somewhere new (not up, or too busy): try again this soon
 	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
 	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
 )
@@ -111,6 +114,8 @@ type Agent struct {
 	mu    sync.Mutex
 	state State
 	subs  map[chan struct{}]struct{}
+
+	browserInfo *browser.Info // what the browser said about itself the last time it was asked
 
 	setupCh   chan SetupRequest
 	rescueCh  chan string
@@ -314,11 +319,14 @@ func (a *Agent) runSetup(ctx context.Context) {
 			return
 		case <-a.rescueCh: // nothing to rescue: already in setup
 		case <-tick.C:
-			a.update(func(s *State) {
-				if s.Phase == PhasePortal && time.Since(s.PortalSeen) > PortalIdleAfter {
-					s.Phase = PhasePair
-				}
-			})
+			// Only when there's something to change: every update has the TV page and the browser check look again.
+			if st := a.State(); st.Phase == PhasePortal && time.Since(st.PortalSeen) > PortalIdleAfter {
+				a.update(func(s *State) {
+					if s.Phase == PhasePortal && time.Since(s.PortalSeen) > PortalIdleAfter {
+						s.Phase = PhasePair
+					}
+				})
+			}
 		case req := <-a.setupCh:
 			if a.trySetup(ctx, req) {
 				return
@@ -517,7 +525,7 @@ func (a *Agent) runPaired(ctx context.Context) {
 				continue
 			}
 			st := a.Net.Status(ctx)
-			a.update(func(s *State) { s.Net = st })
+			a.noteNet(st)
 			if st.Connected() {
 				lostSince = time.Time{}
 				if state.Phase == PhaseConnecting {
@@ -534,6 +542,20 @@ func (a *Agent) runPaired(ctx context.Context) {
 				lastTry = time.Now()
 			}
 		}
+	}
+}
+
+// noteNet keeps what the network check found. The TV page and the browser check are told only when something the TV
+// shows changed (the network, its address, its signal as a word): the signal's number wobbles all the time, and
+// every nudge is work for a browser that has none to spare.
+func (a *Agent) noteNet(st netmgr.Status) {
+	a.mu.Lock()
+	old := a.state.Net
+	a.state.Net = st
+	a.mu.Unlock()
+	old.Signal, st.Signal = netmgr.Bars(old.Signal), netmgr.Bars(st.Signal)
+	if old != st {
+		a.update(func(*State) {})
 	}
 }
 
@@ -647,7 +669,10 @@ func (a *Agent) session(ctx context.Context, conn *pavilion.Conn) error {
 	if err := sendStatus(); err != nil {
 		return err
 	}
-	readErr := make(chan error, 1)
+	// One goroutine only reads, another acts on what was read, in order: acting can take seconds (reloading a busy
+	// browser, turning the picture), and the answers to our pings only arrive while something is reading.
+	readErr := make(chan error, 2)
+	msgs := make(chan pavilion.Message, 16)
 	go func() {
 		for {
 			m, err := conn.Read(ctx)
@@ -655,14 +680,30 @@ func (a *Agent) session(ctx context.Context, conn *pavilion.Conn) error {
 				readErr <- err
 				return
 			}
-			if err := a.handle(ctx, m, send); err != nil {
-				readErr <- err
+			select {
+			case msgs <- m:
+			case <-ctx.Done():
 				return
+			}
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case m := <-msgs:
+				if err := a.handle(ctx, m, send); err != nil {
+					readErr <- err
+					return
+				}
 			}
 		}
 	}()
 	tick := time.NewTicker(StatusEvery)
 	defer tick.Stop()
+	ping := time.NewTicker(PingEvery)
+	defer ping.Stop()
 	for {
 		select {
 		case err := <-readErr:
@@ -672,6 +713,16 @@ func (a *Agent) session(ctx context.Context, conn *pavilion.Conn) error {
 		case <-tick.C:
 			if err := sendStatus(); err != nil {
 				return err
+			}
+		case <-ping.C:
+			// A connection that died quietly (the Wi-Fi dropped for a moment, the router restarted) still takes
+			// what we send for many minutes, while nothing Pavilion sends arrives: a screen picked there would
+			// sit unseen until the connection finally failed. So ask, and open a new one when nothing answers.
+			pctx, cancel := context.WithTimeout(ctx, PingTimeout)
+			err := conn.Ping(pctx)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				return fmt.Errorf("Pavilion stopped answering (%w)", err)
 			}
 		}
 	}
@@ -788,34 +839,79 @@ func (a *Agent) wantURL() string {
 
 func (a *Agent) onShell(url string) bool { return strings.HasPrefix(url, a.ShellURL) }
 
+// BrowserInfo is what the browser said about itself (which one, and whether the graphics chip draws its pages), or
+// nil when it hasn't been asked yet or can't be.
+func (a *Agent) BrowserInfo() *browser.Info {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.browserInfo
+}
+
+// describeBrowser asks the browser what it is and notes the answer in the log: how it draws is the first thing to
+// know about a dongle that's slow.
+func (a *Agent) describeBrowser(ctx context.Context) bool {
+	info, err := a.Browser.Describe(ctx)
+	if err != nil {
+		return false
+	}
+	a.mu.Lock()
+	a.browserInfo = &info
+	a.mu.Unlock()
+	how := "its pages are drawn by the processor, not the graphics chip"
+	if info.Accelerated() {
+		how = "its pages are drawn by the graphics chip"
+	}
+	if status := info.Graphics["gpu_compositing"]; status != "" {
+		how += " (" + status + ")"
+	}
+	a.logf("browser", "The browser is %s; %s", info.Version, how)
+	return true
+}
+
 // steerBrowser keeps the browser on wantURL and restarts it when it hangs.
 func (a *Agent) steerBrowser(ctx context.Context) {
 	tick := time.NewTicker(BrowserCheck)
 	defer tick.Stop()
 	var hungSince, sentAt time.Time
 	starvedLogged := false
-	lastWant := "" // the screen the browser was last sent to (it lands on another address: the link signs in, then redirects)
-	open := func(want string) {
+	lastWant := ""                    // the screen the browser was last sent to (it lands on another address: the link signs in, then redirects)
+	described, describeTries := "", 0 // the browser (browser.Target) that was last asked what it is
+	open := func(want string) bool {
 		lastWant, sentAt = want, time.Now()
 		if err := a.Browser.Navigate(ctx, want); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				// Slow, not failed: the page is most likely still loading. Opening it again would only start it over.
 				a.logf("browser", "%s is taking a while to open", want)
-				return
+				return true
 			}
 			a.logf("browser", "Couldn't open %s: %v", want, err)
 			lastWant = ""
+			return false
 		}
+		return true
 	}
+	var retry <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-a.browserCh:
 		case <-tick.C:
+		case <-retry:
 		}
+		retry = nil
 		want := a.wantURL()
-		current, err := a.Browser.Probe(ctx)
+		// Somewhere new to go (a screen just picked in Pavilion, or back to the dongle's page): the browser itself
+		// says where it is, even while its page is too busy to answer, so it can be sent there straight away. The
+		// page is asked (is it hung? did it load?) on the checks after that.
+		pending := want != lastWant
+		var current string
+		var err error
+		if pending {
+			current, err = a.Browser.URL(ctx)
+		} else {
+			current, err = a.Browser.Probe(ctx)
+		}
 		if err != nil {
 			if errors.Is(err, browser.ErrNoCDP) && a.Browser.CDP == "" {
 				continue // not steerable: the agent's page navigates by itself
@@ -836,10 +932,8 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 				a.Browser.Restart()
 				hungSince = time.Time{}
 			}
-			// A busy page doesn't answer, but the browser itself can still take it somewhere new (a screen just
-			// picked in Pavilion): don't wait for the old page to calm down first.
-			if want != lastWant && !errors.Is(err, browser.ErrNoCDP) {
-				open(want)
+			if pending {
+				retry = time.After(OpenRetry) // not at the next check, 15 seconds away: someone is waiting for this screen
 			}
 			continue
 		}
@@ -855,9 +949,20 @@ func (a *Agent) steerBrowser(ctx context.Context) {
 		}
 		onWant := current == want || (want == a.ShellURL && a.onShell(current)) ||
 			(want != a.ShellURL && !a.onShell(current) && want == lastWant && !browser.IsErrorPage(current))
-		if onWant {
+		if !onWant {
+			if !open(want) {
+				retry = time.After(OpenRetry)
+			}
 			continue
 		}
-		open(want)
+		lastWant = want
+		// Nothing to do and the browser is answering: a good moment to ask a browser that just started what it is.
+		if target := a.Browser.Target(); target != described && describeTries < 3 {
+			if describeTries++; a.describeBrowser(ctx) {
+				described, describeTries = target, 0
+			}
+		} else if target != described {
+			described, describeTries = target, 0 // it won't say: don't keep asking this one
+		}
 	}
 }

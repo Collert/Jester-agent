@@ -44,6 +44,11 @@ Authorization: Bearer 12.<secret>
 Text frames, one JSON object each. The connection stays open; the dongle reconnects after 1 s, doubling to a minute,
 with jitter.
 
+The dongle sends a WebSocket ping every 15 s. No pong within 10 s means the connection has died without a close
+(the Wi-Fi dropped): the dongle closes it and connects again, and gets `config` afresh. Pavilion's server has to
+answer pings, which Daphne and uvicorn do by themselves; a proxy in front must pass them on. The dongle closes
+connections without a close frame, so Pavilion sees them end as 1006.
+
 **Close code 4401** (or a 401/403 on the upgrade) means the token isn't valid any more: the dongle was unpaired. The
 dongle forgets its token, name and screen (keeping Pavilion's address and the Wi-Fi) and goes back to "Scan to
 start". Any other close just reconnects.
