@@ -198,3 +198,26 @@ func TestImagerKeyIsKeptUnlessChanged(t *testing.T) {
 		}
 	}
 }
+
+// While any CSS animation runs, Chromium redraws the TV 60 times a second, which a Pi Zero can't afford next to a
+// screen that's loading (measured: the idle page's drift alone was seven times the rest of the page's work). The TV
+// page has no animation without an end; its spinners are turned by tv.js, a few steps a second.
+func TestTVPageHasNoEndlessAnimation(t *testing.T) {
+	css, err := staticFS.ReadFile("static/tv.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(css), "\n") {
+		if strings.Contains(line, "animation") && strings.Contains(line, "infinite") {
+			t.Errorf("tv.css animates without end: %s", strings.TrimSpace(line))
+		}
+	}
+	s, _, _ := setup(t)
+	w := httptest.NewRecorder()
+	if err := s.tv.ExecuteTemplate(w, "app", tvView{Kind: "idle", BrandTop: "Window TV"}); err != nil {
+		t.Fatal(err)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "No screen assigned") || strings.Contains(body, "drift") {
+		t.Errorf("the idle page sits still: %s", body)
+	}
+}

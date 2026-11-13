@@ -34,6 +34,7 @@ type Browser struct {
 	restarts atomic.Int32
 	started  atomic.Int64 // unix ms when the current process started
 	cdpID    atomic.Int64
+	target   atomic.Value // string: the page's DevTools address the last time the browser answered
 }
 
 func (b *Browser) logf(kind, format string, args ...any) {
@@ -167,19 +168,40 @@ func (b *Browser) page(ctx context.Context) (target, error) {
 	}
 	for _, t := range targets {
 		if t.Type == "page" && t.WS != "" {
+			b.target.Store(t.WS)
 			return t, nil
 		}
 	}
 	return target{}, fmt.Errorf("%w: no page", ErrNoCDP)
 }
 
-// call sends one DevTools command to the page and waits for its answer. Running out of CallTimeout is an error that
-// is context.DeadlineExceeded, however the connection reported it (often as "use of closed network connection").
-func (b *Browser) call(ctx context.Context, method string, params any) (_ json.RawMessage, err error) {
+// Target names the page the browser last answered about ("" before it has). It's a new name whenever the browser
+// has been started again.
+func (b *Browser) Target() string {
+	t, _ := b.target.Load().(string)
+	return t
+}
+
+// URL is where the browser says its page is. The browser itself answers this, so it works while the page is too
+// busy to answer anything (Probe). A page that failed to load still has the address it was sent to here.
+func (b *Browser) URL(ctx context.Context) (string, error) {
+	t, err := b.page(ctx)
+	return t.URL, err
+}
+
+// call sends one DevTools command to the page and waits for its answer.
+func (b *Browser) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	t, err := b.page(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return b.callOn(ctx, t.WS, method, params)
+}
+
+// callOn sends one DevTools command to the target at ws and waits for its answer. Running out of CallTimeout is an
+// error that is context.DeadlineExceeded, however the connection reported it (often as "use of closed network
+// connection").
+func (b *Browser) callOn(ctx context.Context, wsURL, method string, params any) (_ json.RawMessage, err error) {
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
 	defer func() {
@@ -187,7 +209,7 @@ func (b *Browser) call(ctx context.Context, method string, params any) (_ json.R
 			err = fmt.Errorf("%w (%v)", context.DeadlineExceeded, err)
 		}
 	}()
-	ws, _, err := websocket.Dial(ctx, t.WS, nil)
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoCDP, err)
 	}
@@ -239,13 +261,13 @@ func (b *Browser) Reload(ctx context.Context) error {
 }
 
 // Probe asks the page something trivial and returns its address: an error means the browser (or its tab) is hung
-// or crashed.
+// or crashed. Unlike URL, a page that failed to load answers with the browser's error page (IsErrorPage).
 func (b *Browser) Probe(ctx context.Context) (string, error) {
 	t, err := b.page(ctx)
 	if err != nil {
 		return "", err
 	}
-	res, err := b.call(ctx, "Runtime.evaluate", map[string]any{"expression": "location.href", "returnByValue": true})
+	res, err := b.callOn(ctx, t.WS, "Runtime.evaluate", map[string]any{"expression": "location.href", "returnByValue": true})
 	if err != nil {
 		return t.URL, err
 	}
@@ -259,6 +281,70 @@ func (b *Browser) Probe(ctx context.Context) (string, error) {
 		return out.Result.Value, nil
 	}
 	return t.URL, nil
+}
+
+// Info is what the browser says about itself: which one it is and how it draws. On a Pi that tells a slow screen
+// drawn by the processor from one drawn by the graphics chip.
+type Info struct {
+	Version  string            `json:"version"`            // e.g. "Chrome/156.0.8078.79"
+	GPU      string            `json:"gpu,omitempty"`      // the graphics chip it found; "" when none
+	Graphics map[string]string `json:"graphics,omitempty"` // gpu_compositing, rasterization, video_decode: "enabled", or why not
+}
+
+// Accelerated: the graphics chip puts the page on the TV (not the processor).
+func (i Info) Accelerated() bool { return strings.HasPrefix(i.Graphics["gpu_compositing"], "enabled") }
+
+// Describe asks the browser what it is (see Info).
+func (b *Browser) Describe(ctx context.Context) (Info, error) {
+	var info Info
+	if b.CDP == "" {
+		return info, ErrNoCDP
+	}
+	vctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(vctx, http.MethodGet, "http://"+b.CDP+"/json/version", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return info, fmt.Errorf("%w: %v", ErrNoCDP, err)
+	}
+	defer resp.Body.Close()
+	var version struct {
+		Browser string `json:"Browser"`
+		WS      string `json:"webSocketDebuggerUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&version); err != nil || version.WS == "" {
+		return info, fmt.Errorf("%w: no browser target", ErrNoCDP)
+	}
+	info.Version = version.Browser
+	res, err := b.callOn(ctx, version.WS, "SystemInfo.getInfo", map[string]any{})
+	if err != nil {
+		return info, err
+	}
+	var out struct {
+		GPU struct {
+			Devices []struct {
+				Vendor string `json:"vendorString"`
+				Device string `json:"deviceString"`
+			} `json:"devices"`
+			Features map[string]string `json:"featureStatus"`
+		} `json:"gpu"`
+	}
+	_ = json.Unmarshal(res, &out)
+	for _, d := range out.GPU.Devices {
+		if name := strings.TrimSpace(d.Vendor + " " + d.Device); name != "" {
+			info.GPU = name
+			break
+		}
+	}
+	for _, k := range []string{"gpu_compositing", "rasterization", "video_decode"} {
+		if v := out.GPU.Features[k]; v != "" {
+			if info.Graphics == nil {
+				info.Graphics = map[string]string{}
+			}
+			info.Graphics[k] = v
+		}
+	}
+	return info, nil
 }
 
 // IsErrorPage: the browser is showing its own "can't reach this page" (or a crashed tab).

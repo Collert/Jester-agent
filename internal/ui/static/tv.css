@@ -96,7 +96,7 @@ b { font-weight: 800; color: var(--white); }
 .step-dot { position: relative; z-index: 1; width: calc(var(--u) * 56); height: calc(var(--u) * 56); flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: calc(var(--u) * 24); font-weight: 800; background: transparent; color: var(--moss); box-shadow: inset 0 0 0 calc(var(--u) * 3) var(--ring); }
 .step-dot svg { width: calc(var(--u) * 28); height: calc(var(--u) * 28); stroke-width: 3; }
 .is-done .step-dot { background: var(--amber); color: var(--ink); box-shadow: none; }
-.is-now .step-dot { background: var(--white); color: var(--ink); box-shadow: none; animation: pulse 1.6s ease-out infinite; }
+.is-now .step-dot { background: var(--white); color: var(--ink); box-shadow: 0 0 0 calc(var(--u) * 8) rgba(244, 169, 59, .28); }
 .is-fail .step-dot { background: var(--red); color: var(--white); box-shadow: none; }
 .step-body { flex: 1; min-width: 0; padding-top: calc(var(--u) * 6); }
 .step-t { display: block; font-size: calc(var(--u) * 30); font-weight: 800; line-height: calc(var(--u) * 36); color: var(--white); }
@@ -108,9 +108,6 @@ b { font-weight: 800; color: var(--white); }
 /* idle and centred messages */
 .middle { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 calc(var(--u) * 120); }
 .middle .h-l { margin-top: calc(var(--u) * 48); }
-/* Moves about a pixel every half second rather than every frame: the same slow drift (against burn-in), without a Pi
-   Zero redrawing the TV 60 times a second for a page that otherwise sits still. */
-.drift { animation: drift 90s steps(45) infinite; will-change: transform; }
 .idle-frame { width: calc(var(--u) * 200); height: calc(var(--u) * 132); border-radius: calc(var(--u) * 26); border: calc(var(--u) * 4) dashed #4E6A5E; display: flex; align-items: center; justify-content: center; color: var(--sage); }
 .idle-frame svg { width: calc(var(--u) * 64); height: calc(var(--u) * 64); stroke-width: 1.8; }
 .pill { margin-top: calc(var(--u) * 44); display: flex; align-items: center; gap: calc(var(--u) * 14); height: calc(var(--u) * 64); padding: 0 calc(var(--u) * 28); border-radius: calc(var(--u) * 32); background: var(--card); font-size: calc(var(--u) * 24); font-weight: 700; color: var(--mist); }
@@ -130,10 +127,9 @@ b { font-weight: 800; color: var(--white); }
 .identify-name { margin-top: calc(var(--u) * 48); font-family: var(--disp); font-size: calc(var(--u) * 150); line-height: 1; font-weight: 700; letter-spacing: -.04em; }
 .identify-sub { margin-top: calc(var(--u) * 28); font-size: calc(var(--u) * 36); font-weight: 700; color: var(--sage); }
 
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(244, 169, 59, .5); } 80%, 100% { box-shadow: 0 0 0 calc(var(--u) * 22) rgba(244, 169, 59, 0); } }
-@keyframes drift { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(calc(var(--u) * 28), calc(var(--u) * -18)); } 50% { transform: translate(calc(var(--u) * -20), calc(var(--u) * 16)); } 75% { transform: translate(calc(var(--u) * 18), calc(var(--u) * 22)); } }
+/* Nothing here animates without end. While any CSS animation runs, Chromium draws the TV 60 times a second (even one
+   that moves in steps), work a Pi Zero needs for the screen that's loading. The spinners
+   (.spin) are turned by tv.js instead, eight small steps a second; the two animations left run once and stop. */
 @keyframes fill { to { width: 100%; } }
 @keyframes pop { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } .bar-fill { width: 100%; } }

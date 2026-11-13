@@ -110,6 +110,50 @@ func fullAvg10(text string) (float64, bool) {
 	return 0, false
 }
 
+// Health is how the Pi is coping, for telling why a dongle is slow: out of memory (little available, a lot swapped,
+// pressure high), hot (at 80 °C the Pi slows itself down), or just busy. A figure that can't be read is left out.
+type Health struct {
+	MemoryMB          int     `json:"memory_mb,omitempty"`           // what Linux has in all
+	MemoryAvailableMB int     `json:"memory_available_mb,omitempty"` // what programs could still get without swapping
+	SwapUsedMB        int     `json:"swap_used_mb,omitempty"`        // pushed out to swap (compressed memory on a dongle)
+	SwapMB            int     `json:"swap_mb,omitempty"`
+	MemoryPressure    float64 `json:"memory_pressure,omitempty"` // percent of the last 10 s everything waited for memory
+	Load              float64 `json:"load,omitempty"`            // programs wanting a processor, last minute (a Pi Zero 2 W has 4)
+	TemperatureC      float64 `json:"temperature_c,omitempty"`
+}
+
+// ReadHealth reads Health from /proc and /sys.
+func ReadHealth() Health {
+	read := func(path string) string {
+		raw, _ := os.ReadFile(path)
+		return string(raw)
+	}
+	return parseHealth(read("/proc/meminfo"), read("/proc/pressure/memory"), read("/proc/loadavg"),
+		read("/sys/class/thermal/thermal_zone0/temp"))
+}
+
+func parseHealth(meminfo, pressure, loadavg, temp string) Health {
+	var h Health
+	kb := map[string]int{}
+	for _, line := range strings.Split(meminfo, "\n") {
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			if f := strings.Fields(v); len(f) > 0 {
+				kb[k], _ = strconv.Atoi(f[0])
+			}
+		}
+	}
+	h.MemoryMB, h.MemoryAvailableMB = kb["MemTotal"]/1024, kb["MemAvailable"]/1024
+	h.SwapMB, h.SwapUsedMB = kb["SwapTotal"]/1024, (kb["SwapTotal"]-kb["SwapFree"])/1024
+	h.MemoryPressure, _ = fullAvg10(pressure)
+	if f := strings.Fields(loadavg); len(f) > 0 {
+		h.Load, _ = strconv.ParseFloat(f[0], 64)
+	}
+	if milli, err := strconv.Atoi(strings.TrimSpace(temp)); err == nil {
+		h.TemperatureC = float64(milli/100) / 10
+	}
+	return h
+}
+
 // Rotator turns the picture with wlr-randr (Cage supports it). Env must reach Cage's Wayland socket.
 type Rotator struct {
 	Env []string

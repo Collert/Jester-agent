@@ -11,7 +11,7 @@ async function refresh() {
         const res = await fetch("/?partial=1", { cache: "no-store" });
         if (res.ok) {
             const html = await res.text();
-            // Only when it changed: a swap redraws the whole TV and restarts its animations, which a Pi Zero feels.
+            // Only when it changed: a swap redraws the whole TV, which a Pi Zero feels.
             if (html !== shown) { app.innerHTML = html; shown = html; }  // our own server's HTML, rendered and escaped there
             follow();
         }
@@ -33,9 +33,20 @@ function tick() {
     }
 }
 
+// The spinners turn an eighth at a time, eight times a second, and only while one is on the page: a CSS animation
+// would have Chromium redraw the TV 60 times a second for as long as it ran (see tv.css).
+let turn = 0;
+function spin() {
+    const spinners = app.querySelectorAll(".spin");
+    if (!spinners.length) return;
+    turn = (turn + 1) % 8;
+    for (const el of spinners) el.style.transform = `rotate(${turn * 45}deg)`;
+}
+
 const events = new EventSource("/events");
 events.onmessage = refresh;
 events.onopen = refresh;
 setInterval(tick, 5000);
+setInterval(spin, 125);
 tick();
 follow();

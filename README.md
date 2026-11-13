@@ -22,6 +22,9 @@ And afterwards, by itself:
 - **The browser crashes or hangs**: it's started again (systemd), and the agent restarts it when it stops answering.
 - **The screen doesn't load** (Pavilion down when the TV turns on): the TV shows the agent's page saying so and tries
   again every 30 seconds. Once a screen is up it keeps itself current and rides out Pavilion restarts on its own.
+- **The connection to Pavilion dies quietly** (the Wi-Fi dropped for a moment, the router restarted): the agent asks
+  Pavilion for a sign of life every 15 seconds and opens a new connection when none comes, so a screen picked in
+  Pavilion doesn't wait on a connection that's no longer there.
 - **The Wi-Fi goes away for 2 minutes**: the setup Wi-Fi comes back on and the TV shows a QR code to give it a new
   network. It stays paired, and keeps trying the old network every 5 minutes while nobody's on the setup page.
 - **Unpaired in Pavilion**: back to *Scan to start*.
@@ -93,6 +96,23 @@ tty1 as `kiosk`). It also makes every DNS name on the setup Wi-Fi point at the d
 (`deploy/captive-dnsmasq.conf`), which is what makes phones pop the setup page open.
 
 Logs: `journalctl -u jester-agent -u jester-kiosk -f`. State: `curl 127.0.0.1:8080/state` on the Pi.
+
+### When a dongle is slow
+
+A Pi Zero 2 W has 416 MB for everything, and Chromium alone wants about that much for one page, so it lives on
+compressed swap (zram). `curl -s 127.0.0.1:8080/state` on the Pi says how it's coping:
+
+- `system`: memory left (`memory_available_mb`), how much is swapped out, `memory_pressure` (the percent of the last
+  10 seconds everything stood still waiting for memory: over 10 and the Pi is starved, not slow), the load and the
+  temperature (at 80 °C a Pi slows itself down).
+- `browser`: Chromium's version and whether the graphics chip puts its pages on the TV (`gpu_compositing`:
+  `enabled`) or the processor does (`disabled_software`). The agent's log says the same each time the browser
+  starts.
+
+`/etc/default/jester-kiosk` adds Chromium flags without building anything (`JESTER_CHROMIUM_FLAGS`, then
+`sudo systemctl restart jester-kiosk`): for instance `--disable-gpu`, to compare the processor drawing with the
+graphics chip. The TV's own pages have no animation that runs on and on: while one does, Chromium redraws the whole
+TV 60 times a second, which a Pi Zero can't spare.
 
 ### Flags (or environment)
 

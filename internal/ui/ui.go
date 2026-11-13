@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/collert/jester-agent/internal/agent"
+	"github.com/collert/jester-agent/internal/device"
 	"github.com/collert/jester-agent/internal/netmgr"
 	"github.com/collert/jester-agent/internal/pavilion"
 	"github.com/collert/jester-agent/internal/store"
@@ -122,6 +123,8 @@ func (s *Server) stateJSON(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"state": s.Agent.State(), "hardware_id": s.Agent.Hardware, "version": s.Agent.Version,
 		"uptime_seconds": int(s.Agent.Uptime().Seconds()),
+		// Why a dongle is slow: what the Pi has left, and whether the graphics chip draws the browser's pages.
+		"system": device.ReadHealth(), "browser": s.Agent.BrowserInfo(),
 		"config": map[string]any{"pavilion": cfg.PavilionURL, "paired": cfg.Paired(), "dongle_id": cfg.DongleID,
 			"name": cfg.Name, "store": cfg.StoreName, "wifi": cfg.WifiSSID, "wired": cfg.Wired, "screen": cfg.Screen,
 			"orientation": cfg.Orientation, "paired_at": cfg.PairedAt},

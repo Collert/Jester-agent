@@ -1,0 +1,8 @@
+# Extra flags for the kiosk's Chromium, added after the ones in jester-kiosk.service. For trying things on a dongle
+# that's slow, without building anything. After a change:
+#
+#   sudo systemctl restart jester-kiosk
+#   curl -s 127.0.0.1:8080/state       # "system": what the Pi has left; "browser": how the pages are drawn
+#
+# For example, --disable-gpu has the processor draw everything (to compare with the graphics chip, the default).
+JESTER_CHROMIUM_FLAGS=
