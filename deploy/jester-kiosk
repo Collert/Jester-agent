@@ -42,20 +42,28 @@ fi
 # --webprocess-failure=exit: when a page's process dies, cog stops and systemd starts it again on the agent's page,
 # which goes back to the screen. (Left to itself cog reloads the page a few times and then sits on an error page
 # for good, where the agent can't see it.) --bg-color: the dongle's own dark green rather than a white flash between
-# pages. Sound plays without anyone tapping the TV first.
+# pages.
 #
 # setpriv: cog must start without any capabilities. On Trixie a login session on the Pi's own seat is given one
 # (CAP_WAKE_ALARM, from pam_systemd, for alarm clocks), and the sandbox WebKit runs its pages in (bwrap) refuses to
 # start with any at all: "Unexpected capabilities but not setuid".
 #
+# LD_PRELOAD: sound without anyone tapping the TV first (music, order callouts). cog has no option for it, and its
+# --media-playback-requires-user-gesture doesn't decide it in this WebKit: deploy/jester-autoplay.c says what does.
+# JESTER_KIOSK_AUTOPLAY=0 in /etc/default/jester-kiosk leaves it out.
+autoplay=/usr/local/lib/jester/jester-autoplay.so
+preload=
+if [ "${JESTER_KIOSK_AUTOPLAY:-1}" != 0 ] && [ -r "$autoplay" ]; then
+	preload="LD_PRELOAD=$autoplay"
+fi
+
 # What cog says goes to the journal and, for the lines below, to a small file that starts empty each time.
 said="$XDG_RUNTIME_DIR/jester-kiosk.log"
-# shellcheck disable=SC2086 # JESTER_COG_FLAGS is several words
+# shellcheck disable=SC2086 # JESTER_COG_FLAGS is several words; preload is one or none
 {
-	setpriv --inh-caps=-all --ambient-caps=-all \
+	setpriv --inh-caps=-all --ambient-caps=-all env $preload \
 		cog --platform="${JESTER_KIOSK_PLATFORM:-drm}" --platform-params="$params" \
 		--webprocess-failure=exit --bg-color="#14261F" \
-		--media-playback-requires-user-gesture=false \
 		${JESTER_COG_FLAGS:-} \
 		http://127.0.0.1:8080/
 	echo $? > "$XDG_RUNTIME_DIR/jester-kiosk.exit"

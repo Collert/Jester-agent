@@ -134,9 +134,13 @@ buffers on the display, crashes when the browser moves from one site to another 
 and `JESTER_COG_FLAGS` for anything `cog --help-all` lists, such as `--web-mem-limit`.
 
 What isn't there with cog, and was with Chromium: the agent can't see a screen that stopped working after it opened
-(it sees its own page, not the screen), and it can't tell a hung browser from one that's on a screen. And sound:
-music may play (WebKit plays it through GStreamer, installed for that), but Pavilion's live voice channels decode
-their audio with WebCodecs, which this WebKit doesn't have. Neither has been tried on a dongle yet.
+(it sees its own page, not the screen), and it can't tell a hung browser from one that's on a screen.
+
+Sound plays without anyone tapping the TV first, as with Chromium's `--autoplay-policy=no-user-gesture-required`.
+cog has no option for that: WebKit lets a page start sound only when the view's autoplay policy says so, and cog
+leaves it at "allow, without sound". `deploy/jester-autoplay.c`, a few lines of C that `install.sh` builds and the
+launcher loads into cog (`LD_PRELOAD`), makes that policy "allow". `JESTER_KIOSK_AUTOPLAY=0` in
+`/etc/default/jester-kiosk` turns it off. WebKit plays sound through GStreamer (installed for that).
 
 ### When a dongle is slow
 

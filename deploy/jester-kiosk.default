@@ -8,6 +8,10 @@
 JESTER_KIOSK_MODE=
 JESTER_KIOSK_MODE_MAX=
 
+# 0: pages need a tap (a mouse click, a key) before they may play sound, as in an ordinary browser. Empty or 1: they
+# may start it by themselves, which is what a TV nobody touches needs.
+JESTER_KIOSK_AUTOPLAY=
+
 # Extra flags for cog ("cog --help-all" lists them), e.g. --web-mem-limit=250 to have the page's process start
 # afresh when it grows past 250 MB.
 JESTER_COG_FLAGS=

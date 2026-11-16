@@ -13,6 +13,7 @@ map, PROTOCOL.md for the contract with Pavilion (its `devices` app; change both 
 - The kiosk browser is cog (WPE WebKit, Raspberry Pi OS Trixie's), not Chromium: there's no DevTools port. The TV
   page takes itself to the screen and the agent calls the browser back (`steerByPage`, `deploy/jester-cogctl`).
   What the pages use has to work in WebKit 2.48. The DevTools path (`-cdp`) is still there for a Chromium.
+  `deploy/jester-autoplay.c` is the one piece of C: loaded into cog so pages may start sound (cog has no option).
 - All state that must survive a restart goes through `internal/store` (SQLite). The agent's run-time state
   (`agent.State`) is in memory and rebuilt on start.
 - Everything that touches the system goes through an interface with a fake (`netmgr.Fake`), so the whole flow runs

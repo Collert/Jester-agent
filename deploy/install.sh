@@ -23,6 +23,17 @@ apt-get install -y -qq network-manager dnsmasq-base curl fonts-dejavu-core
 apt-get install -y -qq cog libgles2 dbus-daemon gstreamer1.0-plugins-good gstreamer1.0-alsa gstreamer1.0-libav
 [ -x /usr/bin/cog ] && [ -x /usr/bin/cogctl ] || { echo "No cog: the kiosk can't run"; exit 1; }
 ldconfig -p | grep -q 'libGLESv2\.so\.2' || { echo "No libGLESv2.so.2 (libgles2): cog can't draw"; exit 1; }
+# Sound without a tap on the TV: a few lines of C loaded into cog (deploy/jester-autoplay.c says why), built here for
+# whichever Pi this is. Under /usr, where the sandboxed page processes can see it too. Without it everything else
+# still works, so a failed build only warns.
+apt-get install -y -qq gcc libc6-dev
+install -d /usr/local/lib/jester
+if cc -shared -fPIC -O2 -o /usr/local/lib/jester/jester-autoplay.so deploy/jester-autoplay.c; then
+	chmod 0644 /usr/local/lib/jester/jester-autoplay.so
+else
+	echo "Warning: couldn't build jester-autoplay.so: screens will need a tap before they play sound."
+	rm -f /usr/local/lib/jester/jester-autoplay.so
+fi
 
 echo "Kiosk user…"
 id kiosk >/dev/null 2>&1 || useradd -m -G video,render,input,audio -s /usr/sbin/nologin kiosk
