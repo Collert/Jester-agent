@@ -1,0 +1,10 @@
+# Three minutes after boot (time to have tried the setup Wi-Fi with a phone), then every ten.
+[Unit]
+Description=Pavilion visual dongle diagnostics for the SD card
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

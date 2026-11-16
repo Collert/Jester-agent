@@ -1,0 +1,9 @@
+# Writes jester-diagnostics.txt to the SD card's boot partition while the dongle is stuck in setup (see
+# deploy/jester-diagnose). Run by jester-diagnose.timer.
+[Unit]
+Description=Pavilion visual dongle diagnostics for the SD card
+After=jester-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jester-diagnose

@@ -119,6 +119,11 @@ release is out, which is a reason to keep a dongle on pages you trust.
 
 Logs: `journalctl -u jester-agent -u jester-kiosk -f`. State: `curl 127.0.0.1:8080/state` on the Pi.
 
+A dongle that's stuck in setup can't be reached to ask. A few minutes after it starts, and every ten after that, a
+dongle that isn't paired writes `jester-diagnostics.txt` to the SD card's boot partition (the part of the card any
+computer shows): the agent's state, the network's and the browser's logs for that boot, no passwords
+(`deploy/jester-diagnose`). An empty file named `jester-diagnose` there gets the same from a paired dongle.
+
 cog is turned when it starts: the launcher asks the agent which way up Pavilion wants the picture
 (`/kiosk/rotation`), so it's right after a boot or a crash, and a new orientation from Pavilion restarts the kiosk
 once. A turned picture goes through cog's OpenGL renderer; landscape goes to the display as it is, which is cheaper.

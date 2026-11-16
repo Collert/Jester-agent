@@ -1,0 +1,44 @@
+#!/bin/sh
+# Writes what you'd ask a dongle that you can't reach onto the SD card's boot partition, the one part of the card any
+# computer can read: jester-diagnostics.txt. A dongle that's stuck in setup has no network to ask it over, and its
+# setup Wi-Fi may be the very thing that's wrong.
+#
+# jester-diagnose.timer runs this a few minutes after boot and every ten minutes. It only writes while the dongle
+# isn't paired, or when a file named jester-diagnose is on that partition (make an empty one from a computer to get
+# the same from a dongle that's paired). No passwords are in it: NetworkManager keeps them out of what it prints.
+boot=/boot/firmware
+state=$(curl -fsS -m 5 http://127.0.0.1:8080/state 2>/dev/null || true)
+if [ ! -e "$boot/jester-diagnose" ] && ! printf '%s' "$state" | grep -q '"paired": false'; then
+	exit 0
+fi
+
+section() { printf '\n===== %s =====\n' "$1"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+tmp=$(mktemp)
+{
+	echo "Pavilion dongle, $(date)"
+	section "agent"
+	printf '%s\n' "${state:-the agent did not answer}"
+	section "versions"
+	jester-agent -version
+	head -n 2 /etc/os-release
+	uname -r
+	dpkg-query -W cog libwpewebkit-2.0-1 network-manager wpasupplicant firmware-brcm80211 2>/dev/null
+	section "memory"
+	free -m
+	section "network"
+	nmcli device
+	nmcli -f NAME,TYPE,DEVICE,STATE connection show
+	nmcli connection show jester-setup
+	if have iw; then iw dev; iw reg get; fi
+	if have rfkill; then rfkill list; fi
+	section "NetworkManager and wpa_supplicant, this boot"
+	journalctl -b --no-pager -u NetworkManager -u wpa_supplicant | tail -n 300
+	section "agent and kiosk, this boot"
+	journalctl -b --no-pager -u jester-agent -u jester-kiosk | tail -n 200
+	section "kernel, Wi-Fi"
+	dmesg | grep -i -E 'brcm|cfg80211|ieee80211|wlan' | tail -n 80
+} >"$tmp" 2>&1
+install -m 0644 "$tmp" "$boot/jester-diagnostics.txt"
+rm -f "$tmp"
+sync

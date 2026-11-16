@@ -77,7 +77,8 @@ install -d /etc/NetworkManager/dnsmasq-shared.d
 install -m 0644 deploy/captive-dnsmasq.conf /etc/NetworkManager/dnsmasq-shared.d/jester-captive.conf
 install -m 0644 deploy/jester-agent.service /etc/systemd/system/jester-agent.service
 install -m 0644 deploy/jester-kiosk.service /etc/systemd/system/jester-kiosk.service
-install -m 0755 deploy/jester-kiosk deploy/jester-cogctl /usr/local/bin/
+install -m 0755 deploy/jester-kiosk deploy/jester-cogctl deploy/jester-diagnose /usr/local/bin/
+install -m 0644 deploy/jester-diagnose.service deploy/jester-diagnose.timer /etc/systemd/system/
 # The kiosk's settings for this dongle (see the file), kept when the agent is installed again.
 [ -f /etc/default/jester-kiosk ] || install -m 0644 deploy/jester-kiosk.default /etc/default/jester-kiosk
 
@@ -87,6 +88,6 @@ rfkill unblock wifi || true
 [ -z "$NOW" ] || systemctl daemon-reload
 systemctl disable $NOW getty@tty1.service 2>/dev/null || true
 # shellcheck disable=SC2086 # ZRAM is empty or one unit
-systemctl enable $NOW NetworkManager.service $ZRAM jester-agent.service jester-kiosk.service
+systemctl enable $NOW NetworkManager.service $ZRAM jester-agent.service jester-kiosk.service jester-diagnose.timer
 systemctl set-default graphical.target
 echo "Done. The TV should show “Scan to start”."

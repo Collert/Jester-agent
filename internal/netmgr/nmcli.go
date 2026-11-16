@@ -132,16 +132,28 @@ func (m *NM) Scan(ctx context.Context, rescan bool) ([]Network, error) {
 	return m.lastScan, nil
 }
 
+// hotspotArgs is the nmcli command that makes the setup Wi-Fi: a plain WPA2 access point on 2.4 GHz that hands out
+// addresses itself.
+//
+// pmf disable is what keeps it plain WPA2. Left at its default, NetworkManager makes an access point whose radio
+// says it can do WPA3 a mixed WPA2/WPA3 one (it adds SAE to key-mgmt wpa-psk). The Pi's radio says so from
+// Raspberry Pi OS Trixie on, but can't do WPA3 as an access point: phones pick WPA3, never get through, and give
+// up before they're given an address. NetworkManager leaves WPA3 out when protected management frames are off.
+func hotspotArgs(ifname, ssid, password string) []string {
+	return []string{"connection", "add", "type", "wifi", "ifname", ifname,
+		"con-name", hotspotConn, "autoconnect", "no", "ssid", ssid,
+		"802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
+		"ipv4.method", "shared", "ipv4.addresses", HotspotIP + "/24", "ipv6.method", "disabled",
+		"wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.proto", "rsn", "wifi-sec.pairwise", "ccmp", "wifi-sec.group", "ccmp",
+		"wifi-sec.pmf", "disable",
+		"wifi-sec.psk", password}
+}
+
 func (m *NM) StartHotspot(ctx context.Context, ssid, password string) error {
 	// Look around once before the radio becomes an access point: the phone's list comes from this scan.
 	_, _ = m.Scan(ctx, true)
 	_, _ = m.nmcli(ctx, 10*time.Second, "connection", "delete", hotspotConn)
-	if _, err := m.nmcli(ctx, 10*time.Second, "connection", "add", "type", "wifi", "ifname", m.Wifi,
-		"con-name", hotspotConn, "autoconnect", "no", "ssid", ssid,
-		"802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
-		"ipv4.method", "shared", "ipv4.addresses", HotspotIP+"/24", "ipv6.method", "disabled",
-		"wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.proto", "rsn", "wifi-sec.pairwise", "ccmp", "wifi-sec.group", "ccmp",
-		"wifi-sec.psk", password); err != nil {
+	if _, err := m.nmcli(ctx, 10*time.Second, hotspotArgs(m.Wifi, ssid, password)...); err != nil {
 		return err
 	}
 	_, err := m.nmcli(ctx, 30*time.Second, "--wait", "25", "connection", "up", hotspotConn)

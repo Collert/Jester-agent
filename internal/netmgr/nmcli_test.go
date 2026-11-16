@@ -78,3 +78,26 @@ func TestStatusKeepsLastWhenNmcliFails(t *testing.T) {
 		t.Errorf("after nmcli timed out: %+v, want the last status", st)
 	}
 }
+
+// The setup Wi-Fi has to stay plain WPA2: with protected management frames left at their default, NetworkManager
+// turns it into a mixed WPA2/WPA3 access point on a radio that says it can do WPA3, and a Pi's (on Trixie) says so
+// but can't as an access point, so phones never get on.
+func TestHotspotIsPlainWPA2(t *testing.T) {
+	args := hotspotArgs("wlan0", "Pavilion-Setup-7F3K", "lane-1234")
+	setting := func(name string) string {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == name {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	for name, want := range map[string]string{
+		"wifi-sec.pmf": "disable", "wifi-sec.key-mgmt": "wpa-psk", "wifi-sec.proto": "rsn", "wifi-sec.pairwise": "ccmp",
+		"802-11-wireless.mode": "ap", "ssid": "Pavilion-Setup-7F3K", "wifi-sec.psk": "lane-1234", "ifname": "wlan0",
+	} {
+		if got := setting(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
