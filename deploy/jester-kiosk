@@ -19,13 +19,19 @@ dbus-daemon --session --nofork --nopidfile --address="unix:path=$bus" &
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$bus" ] && break; sleep 0.2; done
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$bus"
 
-# Which way up: the agent knows (Pavilion's setting). Turning takes cog's OpenGL renderer; unturned, pages go to
-# the display as they are, which is the cheaper way.
+# Which way up: the agent knows (Pavilion's setting).
+#
+# Always cog's OpenGL renderer ("gles"), turned or not. It draws each of the page's frames onto a surface of its own
+# and lets go of the frame at once. The other one ("modeset", cog's default) puts the page's own buffers on the
+# display, and keeps pointing at one after its page process has gone: when the browser moves to another site (the
+# agent's page to a screen) WebKit swaps page processes, and cog crashed there every time (cog 0.18.4,
+# cog-drm-modeset-renderer.c: the page-flip handler takes a buffer that destroy_buffer_notify has freed).
 rotation=$(curl -fsS -m 5 http://127.0.0.1:8080/kiosk/rotation 2>/dev/null || echo 0)
 case "$rotation" in
-1 | 2 | 3) params="renderer=gles,rotation=$rotation" ;;
-*) params="renderer=modeset" ;;
+1 | 2 | 3) ;;
+*) rotation=0 ;;
 esac
+params="renderer=gles,rotation=$rotation"
 
 # The TV's own preferred mode, but nothing above 1080p: more pixels than that only costs.
 export COG_PLATFORM_DRM_MODE_MAX="${JESTER_KIOSK_MODE_MAX:-1920x1080}"

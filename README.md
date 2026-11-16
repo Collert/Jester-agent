@@ -126,7 +126,8 @@ computer shows): the agent's state, the network's and the browser's logs for tha
 
 cog is turned when it starts: the launcher asks the agent which way up Pavilion wants the picture
 (`/kiosk/rotation`), so it's right after a boot or a crash, and a new orientation from Pavilion restarts the kiosk
-once. A turned picture goes through cog's OpenGL renderer; landscape goes to the display as it is, which is cheaper.
+once. cog draws through its OpenGL renderer (`renderer=gles`), turned or not: its default, which puts the page's own
+buffers on the display, crashes when the browser moves from one site to another (the agent's page to a screen).
 
 `/etc/default/jester-kiosk` has the kiosk's settings (then `sudo systemctl restart jester-kiosk`):
 `JESTER_KIOSK_MODE` for a smaller picture than the TV's own (`1280x720` is under half the pixels of 1080p to draw),
