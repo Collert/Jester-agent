@@ -38,11 +38,16 @@ fi
 # for good, where the agent can't see it.) --bg-color: the dongle's own dark green rather than a white flash between
 # pages. Sound plays without anyone tapping the TV first.
 #
+# setpriv: cog must start without any capabilities. On Trixie a login session on the Pi's own seat is given one
+# (CAP_WAKE_ALARM, from pam_systemd, for alarm clocks), and the sandbox WebKit runs its pages in (bwrap) refuses to
+# start with any at all: "Unexpected capabilities but not setuid".
+#
 # What cog says goes to the journal and, for the lines below, to a small file that starts empty each time.
 said="$XDG_RUNTIME_DIR/jester-kiosk.log"
 # shellcheck disable=SC2086 # JESTER_COG_FLAGS is several words
 {
-	cog --platform="${JESTER_KIOSK_PLATFORM:-drm}" --platform-params="$params" \
+	setpriv --inh-caps=-all --ambient-caps=-all \
+		cog --platform="${JESTER_KIOSK_PLATFORM:-drm}" --platform-params="$params" \
 		--webprocess-failure=exit --bg-color="#14261F" \
 		--media-playback-requires-user-gesture=false \
 		${JESTER_COG_FLAGS:-} \
