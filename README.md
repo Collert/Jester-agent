@@ -161,6 +161,9 @@ A Pi Zero 2 W has 416 MB for everything; what doesn't fit goes to compressed swa
   temperature (at 80 °C a Pi slows itself down).
 - `browser_memory_mb`: what the browser holds, in memory and swapped out together. A screen that keeps growing
   shows here, climbing, long before anything else looks wrong.
+  Songs and videos a screen plays aren't in it: WebKit downloads each whole file while it plays, and the kiosk's
+  launcher has it keep them on the SD card (`~kiosk/.cache/jester-media`), since the place it would use by itself
+  is memory. `sudo jester-diagnose --print` lists any file a browser process still keeps in memory.
 - `on_dongle_page`: whether the browser is showing the agent's page right now (else a screen, or it isn't running).
 - `browser`: with a Chromium (`-cdp`), its version and whether the graphics chip draws its pages. Empty with cog.
 

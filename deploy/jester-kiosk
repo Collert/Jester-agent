@@ -39,6 +39,17 @@ if [ -n "${JESTER_KIOSK_MODE:-}" ]; then
 	export COG_PLATFORM_DRM_VIDEO_MODE="$JESTER_KIOSK_MODE"
 fi
 
+# Songs and videos are kept on the SD card while they play, not in memory. WebKit downloads the whole file of what a
+# page plays, into /tmp; and the /tmp a page's process has is its sandbox's own, which is memory. So a song took its
+# file's size out of the Pi's 416 MB for as long as it played (compressed sound doesn't shrink in the compressed
+# swap either). This names another folder for it: under the cache folder, which a page's process may write to.
+# WebKit deletes each file as it makes it, so nothing is left behind; what a crash might leave is cleared here.
+media="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/jester-media"
+if mkdir -p "$media" 2>/dev/null && [ -w "$media" ]; then
+	rm -f "$media"/WebKit-Media-* 2>/dev/null
+	export WPE_SHELL_MEDIA_DISK_CACHE_PATH="$media"
+fi
+
 # --webprocess-failure=exit: when a page's process dies, cog stops and systemd starts it again on the agent's page,
 # which goes back to the screen. (Left to itself cog reloads the page a few times and then sits on an error page
 # for good, where the agent can't see it.) --bg-color: the dongle's own dark green rather than a white flash between

@@ -50,7 +50,21 @@ report() {
 		awk -v name="$name" -v pid="${dir#/proc/}" '/^VmRSS:/ { rss = $2 } /^VmSwap:/ { swap = $2 }
 			END { if (rss + swap >= 1024) printf "%5d MB in memory, %5d MB swapped out   %s (%s)\n", rss / 1024, swap / 1024, name, pid }' "$dir/status" 2>/dev/null
 	done
+	# Files a browser process holds that are in memory rather than on the card (the /tmp of WebKit's sandbox is
+	# memory): they count as nobody's above. The launcher sends songs to the card; this shows what still isn't.
+	for dir in /proc/[0-9]*; do
+		case "$(cat "$dir/comm" 2>/dev/null)" in cog | WPE*) ;; *) continue ;; esac
+		for fd in "$dir"/fd/*; do
+			[ "$(stat -fLc %T "$fd" 2>/dev/null)" = tmpfs ] || continue
+			size=$(stat -Lc %b "$fd" 2>/dev/null) || continue
+			[ "$size" -ge 2048 ] && echo "$((size / 2048)) MB kept in memory as a file: $(readlink "$fd") (${dir#/proc/})"
+		done
+	done
 	ps -eo pcpu,etime,comm --sort=-pcpu 2>/dev/null | awk 'NR == 1 || /cog|WPE|jester/' | head -n 6
+	# Where the memory is, in the kernel's words: AnonPages is programs' own, Shmem is files kept in memory, and the
+	# zram line says how much has been swapped out (DATA) and what it takes once compressed (TOTAL).
+	grep -E '^(AnonPages|Shmem|Slab|SUnreclaim|PageTables|KernelStack|CmaTotal|CmaFree):' /proc/meminfo
+	if have zramctl; then zramctl; fi
 
 	# Is it the Wi-Fi, or what's beyond it: the link's signal and resends, then how long the router and Pavilion
 	# take to answer.
