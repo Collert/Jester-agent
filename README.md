@@ -28,6 +28,11 @@ And afterwards, by itself:
 - **The connection to Pavilion dies quietly** (the Wi-Fi dropped for a moment, the router restarted): the agent asks
   Pavilion for a sign of life every 15 seconds and opens a new connection when none comes, so a screen picked in
   Pavilion doesn't wait on a connection that's no longer there.
+- **A screen keeps growing** until the Pi's memory is full (a page that leaks a few megabytes a minute gets there in
+  an hour or two, and then the picture freezes for seconds at a time and stops following Pavilion): when three
+  quarters of the swap is in use the agent starts the browser again, which takes a few seconds and gives it all
+  back. WebKit's own limit (`--web-mem-limit`) doesn't do this on a dongle: it counts only what the page has in
+  memory, not what's been swapped out.
 - **The Wi-Fi goes away for 2 minutes**: the setup Wi-Fi comes back on and the TV shows a QR code to give it a new
   network. It stays paired, and keeps trying the old network every 5 minutes while nobody's on the setup page.
 - **Unpaired in Pavilion**: back to *Scan to start*.
@@ -135,7 +140,7 @@ buffers on the display, crashes when the browser moves from one site to another 
 
 `/etc/default/jester-kiosk` has the kiosk's settings (then `sudo systemctl restart jester-kiosk`):
 `JESTER_KIOSK_MODE` for a smaller picture than the TV's own (`1280x720` is under half the pixels of 1080p to draw),
-and `JESTER_COG_FLAGS` for anything `cog --help-all` lists, such as `--web-mem-limit`.
+and `JESTER_COG_FLAGS` for anything `cog --help-all` lists, such as `--scale`.
 
 What isn't there with cog, and was with Chromium: the agent can't see a screen that stopped working after it opened
 (it sees its own page, not the screen), and it can't tell a hung browser from one that's on a screen.
@@ -154,6 +159,8 @@ A Pi Zero 2 W has 416 MB for everything; what doesn't fit goes to compressed swa
 - `system`: memory left (`memory_available_mb`), how much is swapped out, `memory_pressure` (the percent of the last
   10 seconds everything stood still waiting for memory: over 10 and the Pi is starved, not slow), the load and the
   temperature (at 80 °C a Pi slows itself down).
+- `browser_memory_mb`: what the browser holds, in memory and swapped out together. A screen that keeps growing
+  shows here, climbing, long before anything else looks wrong.
 - `on_dongle_page`: whether the browser is showing the agent's page right now (else a screen, or it isn't running).
 - `browser`: with a Chromium (`-cdp`), its version and whether the graphics chip draws its pages. Empty with cog.
 

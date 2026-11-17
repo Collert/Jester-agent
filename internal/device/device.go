@@ -156,6 +156,36 @@ func parseHealth(meminfo, pressure, loadavg, temp string) Health {
 	return h
 }
 
+// BrowserMemoryMB is what the kiosk browser's processes (cog and WebKit's) hold, in memory and swapped out together.
+// The swapped part is the one to watch on a dongle: a page that keeps growing is pushed out to swap, where neither
+// "free" nor WebKit's own count shows it as the browser's. 0 when there's no such process.
+func BrowserMemoryMB() int { return browserMemoryMB("/proc") }
+
+func browserMemoryMB(proc string) int {
+	dirs, _ := filepath.Glob(filepath.Join(proc, "[0-9]*"))
+	kb := 0
+	for _, dir := range dirs {
+		name, err := os.ReadFile(filepath.Join(dir, "comm"))
+		if err != nil {
+			continue
+		}
+		// The kernel keeps 15 letters of a name: WPENetworkProcess is "WPENetworkProce".
+		if n := strings.TrimSpace(string(name)); n != "cog" && !strings.HasPrefix(n, "WPE") {
+			continue
+		}
+		status, _ := os.ReadFile(filepath.Join(dir, "status"))
+		for _, line := range strings.Split(string(status), "\n") {
+			if k, v, ok := strings.Cut(line, ":"); ok && (k == "VmRSS" || k == "VmSwap") {
+				if f := strings.Fields(v); len(f) > 0 {
+					n, _ := strconv.Atoi(f[0])
+					kb += n
+				}
+			}
+		}
+	}
+	return kb / 1024
+}
+
 // Rotator turns the picture with wlr-randr. Env must reach Cage's Wayland socket. Cage forgets the turn whenever it
 // starts, so it's asked again for every new browser.
 type Rotator struct {

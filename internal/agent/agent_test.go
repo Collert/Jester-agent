@@ -939,3 +939,56 @@ func TestScreenThatDoesntAnswerIsTriedAgain(t *testing.T) {
 		t.Error("the TV page wasn't told that it's time to try again")
 	}
 }
+
+// A page that keeps growing fills the Pi's swap until the Pi does little else than move memory about. Before that,
+// the browser is started again: once per filling, and not for a full swap that the restart didn't empty.
+func TestBrowserThatOutgrowsThePiIsStartedAgain(t *testing.T) {
+	oldCheck, oldStrikes := MemoryCheck, MemoryStrikes
+	MemoryCheck, MemoryStrikes = 10*time.Millisecond, 3
+	dir := t.TempDir()
+	restarts := func() int {
+		raw, _ := os.ReadFile(filepath.Join(dir, "restarted"))
+		return len(strings.Fields(string(raw)))
+	}
+	restart := filepath.Join(dir, "restart")
+	if err := os.WriteFile(restart, []byte("#!/bin/sh\necho again >> "+filepath.Join(dir, "restarted")+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	used := 190 // of 414 MB: a screen that's been up a while
+	swap := func(mb int) { mu.Lock(); used = mb; mu.Unlock() }
+	st, _ := store.Open(filepath.Join(dir, "agent.db"))
+	fake := netmgr.NewFake()
+	fake.Delay = time.Millisecond
+	a := New(Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST",
+		Browser: &browser.Browser{RestartCmd: restart},
+		Health: func() device.Health {
+			mu.Lock()
+			defer mu.Unlock()
+			return device.Health{MemoryMB: 415, SwapMB: 414, SwapUsedMB: used}
+		}})
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { a.Run(ctx); close(stopped) }()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+		st.Close()
+		MemoryCheck, MemoryStrikes = oldCheck, oldStrikes
+	})
+
+	time.Sleep(150 * time.Millisecond)
+	if restarts() != 0 {
+		t.Fatalf("a browser with room to spare is left alone, restarted %d times", restarts())
+	}
+	swap(330) // 79%
+	waitFor(t, "the browser started again", func() bool { return restarts() == 1 })
+	time.Sleep(200 * time.Millisecond)
+	if restarts() != 1 {
+		t.Fatalf("a swap the restart didn't empty isn't the browser's doing: restarted %d times", restarts())
+	}
+	swap(40) // the new browser, small again
+	time.Sleep(100 * time.Millisecond)
+	swap(320)
+	waitFor(t, "the browser started again when it filled up once more", func() bool { return restarts() == 2 })
+}

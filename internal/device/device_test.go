@@ -2,7 +2,9 @@ package device
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,5 +48,29 @@ func TestRotateError(t *testing.T) {
 	}
 	if err := rotateError(exec.ErrNotFound, ""); !errors.Is(err, exec.ErrNotFound) {
 		t.Errorf("no wlr-randr: got %v", err)
+	}
+}
+
+func TestBrowserMemoryCountsWhatIsSwappedOut(t *testing.T) {
+	proc := t.TempDir()
+	process := func(pid, name, status string) {
+		dir := filepath.Join(proc, pid)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.WriteFile(filepath.Join(dir, "comm"), []byte(name+"\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o644)
+	}
+	// As on a dongle whose page had grown for two hours: almost all of it swapped out.
+	process("708", "WPEWebProcess", "Name:\tWPEWebProcess\nVmRSS:\t   25368 kB\nVmSwap:\t  389120 kB\n")
+	process("582", "WPENetworkProce", "VmRSS:\t    3880 kB\nVmSwap:\t   10240 kB\n")
+	process("560", "cog", "VmRSS:\t    3072 kB\nVmSwap:\t   20480 kB\n")
+	process("505", "jester-agent", "VmRSS:\t    5504 kB\nVmSwap:\t    9000 kB\n")
+	process("59", "kswapd0", "Name:\tkswapd0\n") // a kernel thread: no memory of its own
+	if got := browserMemoryMB(proc); got != 441 {
+		t.Errorf("browser memory = %d MB, want 441 (in memory and swapped, the browser's processes only)", got)
+	}
+	if got := browserMemoryMB(t.TempDir()); got != 0 {
+		t.Errorf("no browser: %d", got)
 	}
 }

@@ -155,6 +155,8 @@ func (s *Server) stateJSON(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds": int(s.Agent.Uptime().Seconds()),
 		// Why a dongle is slow: what the Pi has left, and whether the graphics chip draws the browser's pages.
 		"system": device.ReadHealth(), "browser": s.Agent.BrowserInfo(),
+		// What the browser holds, in memory and swapped out: a page that keeps growing shows here first.
+		"browser_memory_mb": device.BrowserMemoryMB(),
 		// Whether the kiosk browser is showing the dongle's page right now (else a screen, or it isn't running).
 		"on_dongle_page": s.Agent.Viewers() > 0,
 		"config": map[string]any{"pavilion": cfg.PavilionURL, "paired": cfg.Paired(), "dongle_id": cfg.DongleID,

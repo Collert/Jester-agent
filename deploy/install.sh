@@ -71,6 +71,13 @@ for s in ModemManager bluetooth hciuart udisks2 upower triggerhappy; do
 	systemctl mask "$s.service" 2>/dev/null || true
 done
 
+# Nor for the daily look for package updates and the rebuilding of the manual pages' index: nothing installs updates
+# on a dongle by itself, and when they start they take memory and the SD card from a browser that has none to spare.
+for t in apt-daily.timer apt-daily-upgrade.timer man-db.timer; do
+	systemctl disable $NOW "$t" 2>/dev/null || true
+	systemctl mask "$t" 2>/dev/null || true
+done
+
 echo "Wi-Fi…"
 # The Pi's Wi-Fi chip dozes between packets to save power, so what Pavilion sends (a screen just picked, a command)
 # can wait or get lost on the way in. A dongle is always plugged in: keep the radio awake. This is the file

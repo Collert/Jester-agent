@@ -42,9 +42,15 @@ report() {
 	fi
 	# the busiest programs over three seconds (top's first reading is an average since boot: the second one counts)
 	top -b -n 2 -d 3 -w 120 2>/dev/null | awk '/^top - / { reading++ } reading == 2' | sed -n '7,15p'
-	section "the browser's processes (memory in MB, processor share since each started)"
-	ps -eo rss,pcpu,etime,comm --sort=-rss 2>/dev/null |
-		awk 'NR == 1 || /cog|WPE|bwrap|dbus-daemon|jester/ { if (NR > 1) $1 = int($1 / 1024); print }' | head -n 12
+	# What's swapped out counts: a page that keeps growing is pushed out to swap, and "in memory" stays small.
+	section "the browser's and the agent's processes"
+	for dir in /proc/[0-9]*; do
+		name=$(cat "$dir/comm" 2>/dev/null) || continue
+		case "$name" in cog | WPE* | jester-agent) ;; *) continue ;; esac
+		awk -v name="$name" -v pid="${dir#/proc/}" '/^VmRSS:/ { rss = $2 } /^VmSwap:/ { swap = $2 }
+			END { if (rss + swap >= 1024) printf "%5d MB in memory, %5d MB swapped out   %s (%s)\n", rss / 1024, swap / 1024, name, pid }' "$dir/status" 2>/dev/null
+	done
+	ps -eo pcpu,etime,comm --sort=-pcpu 2>/dev/null | awk 'NR == 1 || /cog|WPE|jester/' | head -n 6
 
 	# Is it the Wi-Fi, or what's beyond it: the link's signal and resends, then how long the router and Pavilion
 	# take to answer.

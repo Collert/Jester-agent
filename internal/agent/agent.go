@@ -61,6 +61,9 @@ var (
 	OpenRetry        = 2 * time.Second         // the browser couldn't be sent somewhere new (not up, or too busy): try again this soon
 	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
 	AwayGrace        = 3 * time.Second         // a browser off the dongle's page this long isn't reloading it: it's somewhere else
+	MemoryCheck      = 15 * time.Second        // how often the Pi's memory is looked at
+	SwapFullAt       = 75                      // percent of the swap in use at which the browser has outgrown the Pi
+	MemoryStrikes    = 4                       // looks in a row over that before the browser is started again
 	TurnSettle       = 5 * time.Second         // a browser still there this long after its picture was turned took the turn well
 	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
 )
@@ -109,6 +112,9 @@ type Options struct {
 	// Starved: the system is short of memory right now, so a browser that doesn't answer is waiting, not hung
 	// (device.MemoryStarved). nil: never.
 	Starved func() bool
+	// Health reads how the Pi is coping (device.ReadHealth), for starting a browser again that has outgrown the
+	// Pi's memory (watchMemory). nil: not watched.
+	Health func() device.Health
 }
 
 // Agent runs the dongle.
@@ -330,9 +336,10 @@ func (a *Agent) Uptime() time.Duration { return time.Since(a.start) }
 func (a *Agent) Run(ctx context.Context) {
 	a.logf("agent", "Starting, version %s, dongle %s", a.Version, a.Hardware)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); a.Browser.Run(ctx) }()
 	go func() { defer wg.Done(); a.steerBrowser(ctx) }()
+	go func() { defer wg.Done(); a.watchMemory(ctx) }()
 	defer wg.Wait()
 	for ctx.Err() == nil {
 		if a.Store.Config().Paired() {
@@ -1025,6 +1032,47 @@ func (a *Agent) describeBrowser(ctx context.Context) bool {
 	}
 	a.logf("browser", "The browser is %s; %s", info.Version, how)
 	return true
+}
+
+// watchMemory starts the browser again when it has outgrown the Pi. A page that keeps growing (some do, by a few
+// megabytes a minute) is swapped out to compressed memory bit by bit, and nothing stops it: WebKit counts only what
+// it has in memory, not what's swapped, so its own limit never comes. When the swap is full the Pi spends its time
+// moving memory about: the screen freezes for seconds at a time and stops hearing from Pavilion, and the agent can
+// barely answer. Before that, at SwapFullAt, a new browser (on the dongle's page, then the screen again) costs a
+// few seconds of picture and gives all of it back.
+//
+// One restart per filling: if the swap is still that full afterwards it wasn't the browser, and starting it over
+// and over would only add to the trouble.
+func (a *Agent) watchMemory(ctx context.Context) {
+	if a.Health == nil || !a.Browser.CanRestart() {
+		return
+	}
+	tick := time.NewTicker(MemoryCheck)
+	defer tick.Stop()
+	strikes, armed := 0, true
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		h := a.Health()
+		if h.SwapMB <= 0 {
+			continue // no swap: a browser that outgrows the Pi is stopped by the kernel, and started again
+		}
+		used := h.SwapUsedMB * 100 / h.SwapMB
+		if used < SwapFullAt {
+			strikes, armed = 0, true
+			continue
+		}
+		if strikes++; strikes < MemoryStrikes || !armed {
+			continue
+		}
+		a.logf("browser", "The browser has outgrown the Pi's memory (%d of %d MB of swap in use, the browser holds %d MB); starting it again",
+			h.SwapUsedMB, h.SwapMB, device.BrowserMemoryMB())
+		a.Browser.Restart()
+		strikes, armed = 0, false
+	}
 }
 
 // steerByPage steers a browser that has no DevTools port (cog). The dongle's page does the going: while the

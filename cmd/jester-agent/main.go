@@ -105,6 +105,7 @@ func main() {
 	opts := agent.Options{Store: st, Net: nm, Browser: br, ShellURL: shell, Version: version, Reboot: *rebootCmd, Hardware: *hardwareID}
 	if !*fake {
 		opts.Starved = device.MemoryStarved
+		opts.Health = device.ReadHealth
 	}
 	if *cdp == "" {
 		opts.KioskRotates = *rotate // cog on the display: it asks which way up when it starts (/kiosk/rotation)

@@ -12,6 +12,7 @@ JESTER_KIOSK_MODE_MAX=
 # may start it by themselves, which is what a TV nobody touches needs.
 JESTER_KIOSK_AUTOPLAY=
 
-# Extra flags for cog ("cog --help-all" lists them), e.g. --web-mem-limit=250 to have the page's process start
-# afresh when it grows past 250 MB.
+# Extra flags for cog ("cog --help-all" lists them), e.g. --scale=0.8 to draw pages at four fifths of their size.
+# (Not --web-mem-limit: WebKit counts only what a page has in memory, not what's swapped out, so on a dongle the
+# limit never comes. The agent watches the swap instead.)
 JESTER_COG_FLAGS=
