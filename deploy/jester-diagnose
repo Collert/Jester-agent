@@ -1,21 +1,28 @@
 #!/bin/sh
-# Writes what you'd ask a dongle that you can't reach onto the SD card's boot partition, the one part of the card any
-# computer can read: jester-diagnostics.txt. A dongle that's stuck in setup has no network to ask it over, and its
-# setup Wi-Fi may be the very thing that's wrong.
+# What you'd ask a dongle that isn't behaving: the agent's state, how the Pi, its Wi-Fi and the browser are doing
+# right now, and the logs of this boot. No passwords are in it: NetworkManager keeps them out of what it prints.
 #
-# jester-diagnose.timer runs this a few minutes after boot and every ten minutes. It only writes while the dongle
-# isn't paired, or when a file named jester-diagnose is on that partition (make an empty one from a computer to get
-# the same from a dongle that's paired). No passwords are in it: NetworkManager keeps them out of what it prints.
+#   sudo jester-diagnose --print      prints it, for looking at or pasting (run it while the trouble is happening)
+#
+# Without --print it's for a dongle that can't be reached at all (stuck in setup, with no network to ask it over,
+# and its setup Wi-Fi may be the very thing that's wrong): it writes jester-diagnostics.txt onto the SD card's boot
+# partition, the one part of the card any computer can read. jester-diagnose.timer runs it that way a few minutes
+# after boot and every ten minutes; it only writes while the dongle isn't paired, or when a file named
+# jester-diagnose is on that partition (make an empty one from a computer to get the same from a paired dongle).
 boot=/boot/firmware
+print=
+[ "${1:-}" = "--print" ] && print=1
 state=$(curl -fsS -m 5 http://127.0.0.1:8080/state 2>/dev/null || true)
-if [ ! -e "$boot/jester-diagnose" ] && ! printf '%s' "$state" | grep -q '"paired": false'; then
+if [ -z "$print" ] && [ ! -e "$boot/jester-diagnose" ] && ! printf '%s' "$state" | grep -q '"paired": false'; then
 	exit 0
 fi
 
 section() { printf '\n===== %s =====\n' "$1"; }
 have() { command -v "$1" >/dev/null 2>&1; }
-tmp=$(mktemp)
-{
+# Printed, the logs are cut shorter: it's meant to be read or pasted.
+lines() { if [ -n "$print" ]; then echo "$2"; else echo "$1"; fi; }
+
+report() {
 	echo "Pavilion dongle, $(date)"
 	section "agent"
 	printf '%s\n' "${state:-the agent did not answer}"
@@ -24,21 +31,62 @@ tmp=$(mktemp)
 	head -n 2 /etc/os-release
 	uname -r
 	dpkg-query -W cog libwpewebkit-2.0-1 network-manager wpasupplicant firmware-brcm80211 2>/dev/null
-	section "memory"
+
+	# Is the Pi itself struggling: out of memory, too hot or slowed down, or one program eating a processor?
+	section "the Pi"
+	uptime
 	free -m
+	if have vcgencmd; then
+		vcgencmd measure_temp
+		vcgencmd get_throttled # 0x0 is fine; anything else: slowed down for heat or power, now or since boot
+	fi
+	# the busiest programs over three seconds (top's first reading is an average since boot: the second one counts)
+	top -b -n 2 -d 3 -w 120 2>/dev/null | awk '/^top - / { reading++ } reading == 2' | sed -n '7,15p'
+	section "the browser's processes (memory in MB, processor share since each started)"
+	ps -eo rss,pcpu,etime,comm --sort=-rss 2>/dev/null |
+		awk 'NR == 1 || /cog|WPE|bwrap|dbus-daemon|jester/ { if (NR > 1) $1 = int($1 / 1024); print }' | head -n 12
+
+	# Is it the Wi-Fi, or what's beyond it: the link's signal and resends, then how long the router and Pavilion
+	# take to answer.
+	section "Wi-Fi link"
+	if have iw; then
+		wlan=$(iw dev | awk '/Interface/ { print $2; exit }')
+		iw dev "${wlan:-wlan0}" link
+		iw dev "${wlan:-wlan0}" station dump | grep -E 'signal|bitrate|tx (retries|failed)|beacon loss|connected time'
+		iw dev "${wlan:-wlan0}" get power_save
+	fi
+	section "answers from the router and from Pavilion"
+	router=$(ip route 2>/dev/null | awk '/^default/ { print $3; exit }')
+	[ -n "$router" ] && ping -c 5 -W 3 -q "$router" 2>&1 | tail -n 2
+	pavilion=$(printf '%s' "$state" | sed -n 's|.*"pavilion": "\([^"]*\)".*|\1|p' | head -n 1)
+	if [ -n "$pavilion" ]; then
+		host=${pavilion#*://}
+		ping -c 5 -W 3 -q "${host%%[:/]*}" 2>&1 | tail -n 2
+		curl -s -o /dev/null -m 20 -w "a page from $pavilion: %{http_code} in %{time_total} s (connecting took %{time_connect} s)\n" "$pavilion/" 2>&1
+	fi
+
 	section "network"
 	nmcli device
 	nmcli -f NAME,TYPE,DEVICE,STATE connection show
-	nmcli connection show jester-setup
-	if have iw; then iw dev; iw reg get; fi
-	if have rfkill; then rfkill list; fi
+	if [ -z "$print" ]; then
+		nmcli connection show jester-setup
+		if have iw; then iw dev; iw reg get; fi
+		if have rfkill; then rfkill list; fi
+	fi
 	section "NetworkManager and wpa_supplicant, this boot"
-	journalctl -b --no-pager -u NetworkManager -u wpa_supplicant | tail -n 300
+	journalctl -b --no-pager -u NetworkManager -u wpa_supplicant | tail -n "$(lines 300 60)"
 	section "agent and kiosk, this boot"
-	journalctl -b --no-pager -u jester-agent -u jester-kiosk | tail -n 200
-	section "kernel, Wi-Fi"
-	dmesg | grep -i -E 'brcm|cfg80211|ieee80211|wlan' | tail -n 80
-} >"$tmp" 2>&1
+	journalctl -b --no-pager -u jester-agent -u jester-kiosk | tail -n "$(lines 200 60)"
+	section "kernel: Wi-Fi, the SD card, memory"
+	dmesg | grep -i -E 'brcm|cfg80211|ieee80211|wlan|mmc|oom|out of memory|thrott|voltage' | tail -n "$(lines 80 40)"
+}
+
+if [ -n "$print" ]; then
+	report 2>&1
+	exit 0
+fi
+tmp=$(mktemp)
+report >"$tmp" 2>&1
 install -m 0644 "$tmp" "$boot/jester-diagnostics.txt"
 rm -f "$tmp"
 sync

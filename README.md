@@ -124,6 +124,10 @@ dongle that isn't paired writes `jester-diagnostics.txt` to the SD card's boot p
 computer shows): the agent's state, the network's and the browser's logs for that boot, no passwords
 (`deploy/jester-diagnose`). An empty file named `jester-diagnose` there gets the same from a paired dongle.
 
+On a dongle you can log in to, `sudo jester-diagnose --print` prints the same, with how the Pi, its Wi-Fi and the
+browser are doing at that moment (the busiest programs, the browser's memory, the Wi-Fi link's signal and resends,
+how long the router and Pavilion take to answer). Run it while the trouble is happening.
+
 cog is turned when it starts: the launcher asks the agent which way up Pavilion wants the picture
 (`/kiosk/rotation`), so it's right after a boot or a crash, and a new orientation from Pavilion restarts the kiosk
 once. cog draws through its OpenGL renderer (`renderer=gles`), turned or not: its default, which puts the page's own
