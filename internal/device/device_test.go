@@ -32,6 +32,20 @@ func TestParseHealth(t *testing.T) {
 	}
 }
 
+func TestParseThrottled(t *testing.T) {
+	for raw, want := range map[string]string{
+		"0\n":     "",
+		"":        "", // not a Pi
+		"50005\n": "under-voltage now, slowed down now",
+		"50000\n": "under-voltage earlier, slowed down earlier",
+		"0x80008": "at its soft temperature limit now",
+	} {
+		if got := parseThrottled(raw); got != want {
+			t.Errorf("parseThrottled(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestRotateError(t *testing.T) {
 	failed := &exec.ExitError{}
 	// What wlr-randr 0.3 prints against a compositor without wlr-output-management (Cage before 0.1.5).

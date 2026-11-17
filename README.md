@@ -33,6 +33,11 @@ And afterwards, by itself:
   quarters of the swap is in use the agent starts the browser again, which takes a few seconds and gives it all
   back. WebKit's own limit (`--web-mem-limit`) doesn't do this on a dongle: it counts only what the page has in
   memory, not what's been swapped out.
+- **The Pi itself stops dead** (no memory left at all, a kernel that crashed): the watchdog in the Pi's chip restarts
+  it after 15 seconds without a sign of life from systemd, so nobody has to pull its plug. Every ten minutes the
+  agent notes the temperature, the load, the swap and what the browser holds in its log (`pi` lines), with anything
+  the Pi's firmware reports about a weak power supply or heat; the log is on the SD card, so after such a stop
+  `/state` still shows what it was like just before.
 - **The Wi-Fi goes away for 2 minutes**: the setup Wi-Fi comes back on and the TV shows a QR code to give it a new
   network. It stays paired, and keeps trying the old network every 5 minutes while nobody's on the setup page.
 - **Unpaired in Pavilion**: back to *Scan to start*.
@@ -158,7 +163,8 @@ A Pi Zero 2 W has 416 MB for everything; what doesn't fit goes to compressed swa
 
 - `system`: memory left (`memory_available_mb`), how much is swapped out, `memory_pressure` (the percent of the last
   10 seconds everything stood still waiting for memory: over 10 and the Pi is starved, not slow), the load and the
-  temperature (at 80 °C a Pi slows itself down).
+  temperature (at 80 °C a Pi slows itself down), and `trouble` when the Pi's firmware has had to act on its power
+  supply or heat ("under-voltage now": the TV's USB socket doesn't give it enough).
 - `browser_memory_mb`: what the browser holds, in memory and swapped out together. A screen that keeps growing
   shows here, climbing, long before anything else looks wrong.
   Songs and videos a screen plays aren't in it: WebKit downloads each whole file while it plays, and the kiosk's

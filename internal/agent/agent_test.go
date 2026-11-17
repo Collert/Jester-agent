@@ -942,6 +942,37 @@ func TestScreenThatDoesntAnswerIsTriedAgain(t *testing.T) {
 
 // A page that keeps growing fills the Pi's swap until the Pi does little else than move memory about. Before that,
 // the browser is started again: once per filling, and not for a full swap that the restart didn't empty.
+func TestHowThePiIsDoingGoesIntoTheLog(t *testing.T) {
+	oldCheck, oldNote := MemoryCheck, HealthNote
+	MemoryCheck, HealthNote = 5*time.Millisecond, 20*time.Millisecond
+	st, _ := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	fake := netmgr.NewFake()
+	fake.Delay = time.Millisecond
+	a := New(Options{Store: st, Net: fake, ShellURL: "http://127.0.0.1:8080/", Version: "test", Hardware: "TEST",
+		Browser: &browser.Browser{}, // nothing to start it again with: the notes are kept all the same
+		Health: func() device.Health {
+			return device.Health{MemoryMB: 415, SwapMB: 414, SwapUsedMB: 190, TemperatureC: 71.4, Load: 2.4, Trouble: "under-voltage now"}
+		}})
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { a.Run(ctx); close(stopped) }()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+		st.Close()
+		MemoryCheck, HealthNote = oldCheck, oldNote
+	})
+	want := "71 °C, load 2.4, 190 of 414 MB of swap in use, the browser holds 0 MB; the Pi reports: under-voltage now"
+	waitFor(t, "a note on the Pi in the log", func() bool {
+		for _, e := range st.Events(50) {
+			if e.Kind == "pi" && e.Message == want {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 func TestBrowserThatOutgrowsThePiIsStartedAgain(t *testing.T) {
 	oldCheck, oldStrikes := MemoryCheck, MemoryStrikes
 	MemoryCheck, MemoryStrikes = 10*time.Millisecond, 3

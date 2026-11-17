@@ -97,8 +97,13 @@ report() {
 	journalctl -b --no-pager -u NetworkManager -u wpa_supplicant | tail -n "$(lines 300 60)"
 	section "agent and kiosk, this boot"
 	journalctl -b --no-pager -u jester-agent -u jester-kiosk | tail -n "$(lines 200 60)"
+	# After a dongle stopped dead and was plugged in again: the agent's log above has a "pi" line every ten minutes
+	# from before (it's kept on the card). The system's own log of that run is here if it keeps one on the card
+	# (Raspberry Pi OS may keep it in memory only, and then there's nothing).
+	section "how the run before this one ended"
+	journalctl -b -1 --no-pager -n "$(lines 60 25)" 2>&1 | cut -c1-220
 	section "kernel: Wi-Fi, the SD card, memory"
-	dmesg | grep -i -E 'brcm|cfg80211|ieee80211|wlan|mmc|oom|out of memory|thrott|voltage' | tail -n "$(lines 80 40)"
+	dmesg | grep -i -E 'brcm|cfg80211|ieee80211|wlan|mmc|oom|out of memory|thrott|voltage|watchdog|thermal' | tail -n "$(lines 80 40)"
 }
 
 if [ -n "$print" ]; then

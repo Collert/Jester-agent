@@ -78,6 +78,20 @@ for t in apt-daily.timer apt-daily-upgrade.timer man-db.timer; do
 	systemctl mask "$t" 2>/dev/null || true
 done
 
+# A Pi that stops dead (out of memory for good, a kernel that crashed) starts again by itself instead of waiting
+# behind the TV for someone to pull its plug. The Pi's chip has a watchdog: systemd tells it every few seconds that
+# all is well, and when that stops for 15 seconds (the longest this watchdog waits) the chip restarts the Pi. And a
+# kernel that panics restarts after 10 seconds rather than standing still.
+install -d /etc/systemd/system.conf.d
+cat > /etc/systemd/system.conf.d/90-jester-watchdog.conf <<EOF
+[Manager]
+RuntimeWatchdogSec=15s
+RebootWatchdogSec=5min
+EOF
+cat > /etc/sysctl.d/90-jester-panic.conf <<EOF
+kernel.panic=10
+EOF
+
 echo "Wi-Fi…"
 # The Pi's Wi-Fi chip dozes between packets to save power, so what Pavilion sends (a screen just picked, a command)
 # can wait or get lost on the way in. A dongle is always plugged in: keep the radio awake. This is the file

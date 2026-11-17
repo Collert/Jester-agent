@@ -56,16 +56,19 @@ var (
 	PingTimeout      = 10 * time.Second // no answer to that check this long: the connection is gone, open a new one
 	NetCheckEvery    = 10 * time.Second
 	BrowserCheck     = 15 * time.Second
-	BrowserHungAfter = 2 * time.Minute         // no answer from the browser this long (not counting time the Pi is short of memory): restart it
-	OpenGrace        = time.Minute             // after sending the browser somewhere, how long the page may take to arrive
-	OpenRetry        = 2 * time.Second         // the browser couldn't be sent somewhere new (not up, or too busy): try again this soon
-	ScreenRetry      = 30 * time.Second        // after the screen failed to load, show our page this long before trying again
-	AwayGrace        = 3 * time.Second         // a browser off the dongle's page this long isn't reloading it: it's somewhere else
-	MemoryCheck      = 15 * time.Second        // how often the Pi's memory is looked at
-	SwapFullAt       = 75                      // percent of the swap in use at which the browser has outgrown the Pi
-	MemoryStrikes    = 4                       // looks in a row over that before the browser is started again
-	TurnSettle       = 5 * time.Second         // a browser still there this long after its picture was turned took the turn well
-	PhoneGrace       = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
+	BrowserHungAfter = 2 * time.Minute  // no answer from the browser this long (not counting time the Pi is short of memory): restart it
+	OpenGrace        = time.Minute      // after sending the browser somewhere, how long the page may take to arrive
+	OpenRetry        = 2 * time.Second  // the browser couldn't be sent somewhere new (not up, or too busy): try again this soon
+	ScreenRetry      = 30 * time.Second // after the screen failed to load, show our page this long before trying again
+	AwayGrace        = 3 * time.Second  // a browser off the dongle's page this long isn't reloading it: it's somewhere else
+	MemoryCheck      = 15 * time.Second // how often the Pi's memory is looked at
+	SwapFullAt       = 75               // percent of the swap in use at which the browser has outgrown the Pi
+	MemoryStrikes    = 4                // looks in a row over that before the browser is started again
+	// HealthNote: how often the Pi's temperature and memory go into the log. The log is on the SD card, so after a
+	// dongle has stopped dead and been plugged in again, the last lines say what it was like just before.
+	HealthNote = 10 * time.Minute
+	TurnSettle = 5 * time.Second         // a browser still there this long after its picture was turned took the turn well
+	PhoneGrace = 1500 * time.Millisecond // lets the phone get "Watch the TV" before the setup Wi-Fi goes
 )
 
 // State is everything the pages need to know.
@@ -1043,13 +1046,16 @@ func (a *Agent) describeBrowser(ctx context.Context) bool {
 //
 // One restart per filling: if the swap is still that full afterwards it wasn't the browser, and starting it over
 // and over would only add to the trouble.
+//
+// It also notes how the Pi is doing in the log every HealthNote.
 func (a *Agent) watchMemory(ctx context.Context) {
-	if a.Health == nil || !a.Browser.CanRestart() {
+	if a.Health == nil {
 		return
 	}
 	tick := time.NewTicker(MemoryCheck)
 	defer tick.Stop()
 	strikes, armed := 0, true
+	noted := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1057,6 +1063,18 @@ func (a *Agent) watchMemory(ctx context.Context) {
 		case <-tick.C:
 		}
 		h := a.Health()
+		if time.Since(noted) >= HealthNote {
+			noted = time.Now()
+			note := fmt.Sprintf("%.0f °C, load %.1f, %d of %d MB of swap in use, the browser holds %d MB",
+				h.TemperatureC, h.Load, h.SwapUsedMB, h.SwapMB, device.BrowserMemoryMB())
+			if h.Trouble != "" {
+				note += "; the Pi reports: " + h.Trouble
+			}
+			a.logf("pi", "%s", note)
+		}
+		if !a.Browser.CanRestart() {
+			continue
+		}
 		if h.SwapMB <= 0 {
 			continue // no swap: a browser that outgrows the Pi is stopped by the kernel, and started again
 		}

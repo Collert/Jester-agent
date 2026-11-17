@@ -162,7 +162,7 @@ func (s *Server) stateJSON(w http.ResponseWriter, r *http.Request) {
 		"config": map[string]any{"pavilion": cfg.PavilionURL, "paired": cfg.Paired(), "dongle_id": cfg.DongleID,
 			"name": cfg.Name, "store": cfg.StoreName, "wifi": cfg.WifiSSID, "wired": cfg.Wired, "screen": cfg.Screen,
 			"orientation": cfg.Orientation, "paired_at": cfg.PairedAt},
-		"log": s.Agent.Store.Events(30),
+		"log": s.Agent.Store.Events(50),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)

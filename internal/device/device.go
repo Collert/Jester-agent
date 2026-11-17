@@ -122,6 +122,8 @@ type Health struct {
 	MemoryPressure    float64 `json:"memory_pressure,omitempty"` // percent of the last 10 s everything waited for memory
 	Load              float64 `json:"load,omitempty"`            // programs wanting a processor, last minute (a Pi Zero 2 W has 4)
 	TemperatureC      float64 `json:"temperature_c,omitempty"`
+	// What the Pi's firmware has had to do about its power supply or heat, e.g. "under-voltage now". Empty: nothing.
+	Trouble string `json:"trouble,omitempty"`
 }
 
 // ReadHealth reads Health from /proc and /sys.
@@ -130,8 +132,30 @@ func ReadHealth() Health {
 		raw, _ := os.ReadFile(path)
 		return string(raw)
 	}
-	return parseHealth(read("/proc/meminfo"), read("/proc/pressure/memory"), read("/proc/loadavg"),
+	h := parseHealth(read("/proc/meminfo"), read("/proc/pressure/memory"), read("/proc/loadavg"),
 		read("/sys/class/thermal/thermal_zone0/temp"))
+	h.Trouble = parseThrottled(read("/sys/devices/platform/soc/soc:firmware/get_throttled"))
+	return h
+}
+
+// parseThrottled puts the Pi firmware's "throttled" flags (what vcgencmd get_throttled prints, in hexadecimal) into
+// words: bits 0 to 3 are what's happening now, bits 16 to 19 the same things having happened since it started.
+// A power supply that's too weak (a TV's USB socket often is) shows here, and it's what makes a Pi stop dead.
+func parseThrottled(raw string) string {
+	flags, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(raw), "0x"), 16, 32)
+	if err != nil || flags == 0 {
+		return ""
+	}
+	var out []string
+	for bit, what := range []string{"under-voltage", "processor speed capped", "slowed down", "at its soft temperature limit"} {
+		switch {
+		case flags&(1<<bit) != 0:
+			out = append(out, what+" now")
+		case flags&(1<<(bit+16)) != 0:
+			out = append(out, what+" earlier")
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 func parseHealth(meminfo, pressure, loadavg, temp string) Health {
